@@ -1,0 +1,22 @@
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: discord_bot
+    restart: unless-stopped
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+    volumes:
+      - ./:/app
+    networks:
+      - discord_bot_network
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+
+networks:
+  discord_bot_network:
+    driver: bridge

@@ -1,0 +1,56 @@
+{
+    "hello": {
+        "response": "\ud83d\udc4b Hey there!",
+        "reactions": [
+            "\ud83d\udc4b"
+        ]
+    },
+    "good morning": {
+        "response": "Good morning! Hope you have a great day!",
+        "reactions": [
+            "\ud83c\udf05",
+            "\u2600\ufe0f"
+        ]
+    },
+    "good night": {
+        "response": "Good night! Sleep well!",
+        "reactions": [
+            "\ud83c\udf19",
+            "\ud83d\udca4"
+        ]
+    },
+    "thanks": {
+        "response": "You're welcome! \ud83d\ude0a",
+        "reactions": [
+            "\u2764\ufe0f"
+        ]
+    },
+    "help": {
+        "response": "Need help? Use !help to see all available commands!",
+        "reactions": [
+            "\u2753"
+        ]
+    },
+    "nigger": {
+        "response": "\u041e\u0421\u0423\u0416\u0414\u0410\u042e",
+        "reactions": [
+            "<:weirdchamp:732789883684257822>"
+        ]
+    },
+    "fuckign": {
+        "response": "My brain thinks faster than i can type",
+        "reactions": [
+            "<:lmao:1115910180954198046>"
+        ]
+    },
+    "fire": {
+        "response": null,
+        "reactions": [
+            "\ud83d\udd25"
+        ]
+    },
+    "ah": {
+        "response": "whatever",
+        "reactions": []
+    }
+}
