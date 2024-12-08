@@ -49,18 +49,18 @@ class Fun(commands.Cog):
         elif number < 10:
             await ctx.send("gargabe success")
         elif number < 50:
-            await ctx.send(f"{display_name} is not successful today")
+            await ctx.send(f"{mention} is not successful today")
         elif number < 75:
-            await ctx.send(f"{display_name} is somewhat successful today")
+            await ctx.send(f"{mention} is somewhat successful today")
         elif number < 90:
-            await ctx.send(f"{display_name} is very successful today")
+            await ctx.send(f"{mention} is very successful today")
         elif number < 100:
-            await ctx.send(f"{display_name} IS A MASSIVE SUCCESSFULL BUSINESSMAN")
+            await ctx.send(f"{mention} IS A MASSIVE SUCCESSFULL BUSINESSMAN")
         
     @commands.hybrid_command(name = "увлажнение", description = "Если нужно увлажнится")
     async def увлажнение(self, ctx):
         number = random.randint(1, 100)
-        display_name = ctx.author.display_name
+        mention = ctx.author.mention
         await ctx.send(f"{mention} увлажнился на {number}%")
 async def setup(bot):
     await bot.add_cog(Fun(bot))
