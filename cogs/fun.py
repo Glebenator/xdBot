@@ -6,30 +6,39 @@ from utils.db_handler import DatabaseHandler
 from utils.rng import RandomOrgRNG
 from datetime import datetime, timedelta
 import os
-from dotenv import load_dotenv
-# Load environment variables
-load_dotenv()
 
 class Fun(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = DatabaseHandler()
         api_key = os.getenv('RANDOM_ORG_KEY')
+        if not api_key:
+            raise ValueError("RANDOM_ORG_KEY not found in environment variables")
         self.rng = RandomOrgRNG(api_key)
 
-    @commands.hybrid_command(name="roll", description="Roll a random number")
+    async def cog_unload(self):
+        """Cleanup when cog is unloaded"""
+        await self.rng.close()
+
+    @commands.hybrid_command(name="roll", description="Roll a random number using Random.org")
     async def roll(self, ctx, max_num: int = 100):
-        """Roll a random number between 1 and max_num"""
-        number = self.rng.randint(1, max_num)
+        """Roll a random number between 1 and max_num using true randomness from Random.org"""
+        await ctx.defer()  # Acknowledge command while we wait for Random.org
         
         # Update database
         self.db.update_user(ctx.author.id, ctx.author.name)
-        self.db.log_command_usage(ctx.author.id, "roll", roll_value=number)
         
-        await ctx.send(f"{ctx.author.mention} rolled {number}")
+        try:
+            number = await self.rng.randint(1, max_num)
+            self.db.log_command_usage(ctx.author.id, "roll", roll_value=number)
+            await ctx.send(f"{ctx.author.mention} rolled {number} 🎲")
+        except Exception as e:
+            await ctx.send("Error accessing Random.org. Please try again later.")
 
-    @commands.hybrid_command(name="успех", description="See how successful you are today (once per day)")
+    @commands.hybrid_command(name="успех", description="See how successful you are today using true randomness (once per 12h)")
     async def success(self, ctx):
+        await ctx.defer()  # Acknowledge command while we wait for Random.org
+        
         user_id = ctx.author.id
         current_time = datetime.now()
         
@@ -46,42 +55,46 @@ class Fun(commands.Cog):
                 minutes = int((time_remaining.total_seconds() % 3600) // 60)
                 
                 embed = create_embed(
-                    title="Command on Cooldown",
+                    title="Command on Cooldown ⏳",
                     description=f"You can check your success again in {hours} hours and {minutes} minutes.",
                     color=discord.Color.red().value
                 )
                 await ctx.send(embed=embed)
                 return
 
-        # Generate success message
-        number = self.rng.randint(1, 100)
-        mention = ctx.author.mention
-        
-        # Map number ranges to success levels (1-6)
-        if number < 5:
-            message = "Massive anti-success"
-            success_level = 1
-        elif number < 10:
-            message = "garbage success"
-            success_level = 2
-        elif number < 50:
-            message = f"{mention} is not successful today"
-            success_level = 3
-        elif number < 75:
-            message = f"{mention} is somewhat successful today"
-            success_level = 4
-        elif number < 90:
-            message = f"{mention} is very successful today"
-            success_level = 5
-        else:
-            message = f"{mention} IS A MASSIVE SUCCESSFUL BUSINESSMAN"
-            success_level = 6
+        try:
+            # Generate success message using Random.org
+            number = await self.rng.randint(1, 100)
+            mention = ctx.author.mention
+            
+            # Map number ranges to success levels (1-6)
+            if number < 5:
+                message = f"{mention} 📉 Massive anti-success"
+                success_level = 1
+            elif number < 10:
+                message = f"{mention} 🗑️ garbage success"
+                success_level = 2
+            elif number < 50:
+                message = f"{mention} ❌ is not successful today"
+                success_level = 3
+            elif number < 75:
+                message = f"{mention} 📈 is somewhat successful today"
+                success_level = 4
+            elif number < 90:
+                message = f"{mention} 💰 is very successful today"
+                success_level = 5
+            else:
+                message = f"{mention} 🌟 IS A MASSIVE SUCCESSFUL BUSINESSMAN"
+                success_level = 6
 
-        # Update database
-        self.db.update_command_cooldown(user_id, "успех")
-        self.db.log_command_usage(user_id, "успех", success_level=success_level)
-        
-        await ctx.send(message)
+            # Update database
+            self.db.update_command_cooldown(user_id, "успех")
+            self.db.log_command_usage(user_id, "успех", success_level=success_level)
+            
+            await ctx.send(message)
+            
+        except Exception as e:
+            await ctx.send("Error accessing Random.org. Please try again later.")
 
     @commands.hybrid_command(
         name="топ",
