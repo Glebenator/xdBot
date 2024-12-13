@@ -6,6 +6,9 @@ from utils.db_handler import DatabaseHandler
 from utils.rng import RandomOrgRNG
 from datetime import datetime, timedelta
 import os
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
 
 class Fun(commands.Cog):
     def __init__(self, bot):
