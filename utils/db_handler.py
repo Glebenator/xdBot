@@ -56,27 +56,7 @@ class DatabaseHandler:
                     FOREIGN KEY (user_id) REFERENCES users (user_id)
                 )
             ''')
-            # Create word_usage table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS word_usage (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    word TEXT,
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
-                )
-            ''')
-            # Create word_stats table for quick access to totals
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS word_stats (
-                    user_id INTEGER,
-                    word TEXT,
-                    usage_count INTEGER DEFAULT 0,
-                    last_used TIMESTAMP,
-                    PRIMARY KEY (user_id, word),
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
-                )
-            ''')
-
+            
             conn.commit()
 
     def update_user(self, user_id: int, username: str) -> None:
@@ -103,28 +83,6 @@ class DatabaseHandler:
                 (user_id, command_name, success_level, roll_value)
                 VALUES (?, ?, ?, ?)
             ''', (user_id, command_name, success_level, roll_value))
-            conn.commit()
-
-    def log_word_usage(self, user_id: int, word: str) -> None:
-        """Log usage of a tracked word"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Log individual usage
-            cursor.execute('''
-                INSERT INTO word_usage (user_id, word)
-                VALUES (?, ?)
-            ''', (user_id, word))
-
-            # Update stats
-            cursor.execute('''
-                INSERT INTO word_stats (user_id, word, usage_count, last_used)
-                VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-                ON CONFLICT(user_id, word) DO UPDATE SET
-                    usage_count = usage_count + 1,
-                    last_used = CURRENT_TIMESTAMP
-            ''', (user_id, word))
-            
             conn.commit()
 
     def update_command_cooldown(self, user_id: int, command_name: str) -> None:
@@ -194,89 +152,22 @@ class DatabaseHandler:
                 'success_stats': success_stats,
                 'roll_stats': roll_stats
             }
-            
-    def get_user_word_stats(self, user_id: int) -> List[Dict[str, Any]]:
-        """Get word usage statistics for a user"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    word,
-                    usage_count,
-                    last_used
-                FROM word_stats
-                WHERE user_id = ?
-                ORDER BY usage_count DESC
-            ''', (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
 
-    def get_leaderboard(self, command_name: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get leaderboard for a specific command"""
+    def get_success_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get leaderboard for успех command"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT 
                     u.username,
-                    COUNT(*) as usage_count,
-                    AVG(CASE 
-                        WHEN cu.success_level IS NOT NULL 
-                        THEN cu.success_level 
-                        ELSE cu.roll_value 
-                    END) as avg_value
+                    COUNT(*) as total_attempts,
+                    MAX(cu.success_level) as highest_success,
+                    AVG(cu.success_level) as avg_success
                 FROM command_usage cu
                 JOIN users u ON cu.user_id = u.user_id
-                WHERE command_name = ?
+                WHERE command_name = 'успех'
                 GROUP BY cu.user_id, u.username
-                ORDER BY usage_count DESC
+                ORDER BY highest_success DESC, total_attempts DESC
                 LIMIT ?
-            ''', (command_name, limit))
-            return [dict(row) for row in cursor.fetchall()]
-    
-    def get_word_leaderboard(self, word: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get leaderboard for word usage"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            if word:
-                # Leaderboard for specific word
-                cursor.execute('''
-                    SELECT 
-                        u.username,
-                        ws.word,
-                        ws.usage_count,
-                        ws.last_used
-                    FROM word_stats ws
-                    JOIN users u ON ws.user_id = u.user_id
-                    WHERE ws.word = ?
-                    ORDER BY ws.usage_count DESC
-                    LIMIT ?
-                ''', (word, limit))
-            else:
-                # Overall leaderboard
-                cursor.execute('''
-                    SELECT 
-                        u.username,
-                        SUM(ws.usage_count) as total_count,
-                        COUNT(DISTINCT ws.word) as unique_words,
-                        MAX(ws.last_used) as last_used
-                    FROM word_stats ws
-                    JOIN users u ON ws.user_id = u.user_id
-                    GROUP BY ws.user_id, u.username
-                    ORDER BY total_count DESC
-                    LIMIT ?
-                ''', (limit,))
-            
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_word_history(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent word usage history for a user"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT word, used_at, message_id, channel_id
-                FROM word_usage
-                WHERE user_id = ?
-                ORDER BY used_at DESC
-                LIMIT ?
-            ''', (user_id, limit))
+            ''', (limit,))
             return [dict(row) for row in cursor.fetchall()]

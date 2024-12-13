@@ -35,7 +35,7 @@ class Replies(commands.Cog):
                 json.dump(self.replies, f, indent=4)
         except Exception as e:
             print(f"Error saving replies: {e}")
-
+        
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Listen for messages and respond with text and/or reactions"""
@@ -43,6 +43,10 @@ class Replies(commands.Cog):
             return
 
         content = message.content.lower()
+        if content == "ah":
+            await message.channel.send("Whatever")
+            return
+        
         for trigger, reply_data in self.replies.items():
             if trigger.lower() in content:
                 # Add reactions

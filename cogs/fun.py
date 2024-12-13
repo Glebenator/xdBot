@@ -1,20 +1,26 @@
 # cogs/fun.py
 import discord
 from discord.ext import commands
-import random
 from utils.helpers import create_embed
 from utils.db_handler import DatabaseHandler
+from utils.rng import RandomOrgRNG
 from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
 
 class Fun(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = DatabaseHandler()
+        api_key = os.getenv('RANDOM_ORG_KEY')
+        self.rng = RandomOrgRNG(api_key)
 
     @commands.hybrid_command(name="roll", description="Roll a random number")
     async def roll(self, ctx, max_num: int = 100):
         """Roll a random number between 1 and max_num"""
-        number = random.randint(1, max_num)
+        number = self.rng.randint(1, max_num)
         
         # Update database
         self.db.update_user(ctx.author.id, ctx.author.name)
@@ -33,7 +39,7 @@ class Fun(commands.Cog):
         # Check cooldown
         last_used = self.db.get_command_cooldown(user_id, "успех")
         if last_used:
-            next_available = last_used + timedelta(days=1)
+            next_available = last_used + timedelta(hours=12)
             if current_time < next_available:
                 time_remaining = next_available - current_time
                 hours = int(time_remaining.total_seconds() // 3600)
@@ -48,10 +54,10 @@ class Fun(commands.Cog):
                 return
 
         # Generate success message
-        number = random.randint(1, 100)
+        number = self.rng.randint(1, 100)
         mention = ctx.author.mention
         
-        # Map number ranges to success levels (1-5)
+        # Map number ranges to success levels (1-6)
         if number < 5:
             message = "Massive anti-success"
             success_level = 1
@@ -76,6 +82,40 @@ class Fun(commands.Cog):
         self.db.log_command_usage(user_id, "успех", success_level=success_level)
         
         await ctx.send(message)
+
+    @commands.hybrid_command(
+        name="топ",
+        description="View the success level leaderboard"
+    )
+    async def success_leaderboard(self, ctx):
+        """View the успех command leaderboard"""
+        leaderboard_data = self.db.get_success_leaderboard()
+        
+        if not leaderboard_data:
+            await ctx.send("No успех data available yet!")
+            return
+
+        embed = create_embed(
+            title="💫 Success Leaderboard 💫",
+            description="Top successful businessmen:",
+            color=discord.Color.gold().value
+        )
+
+        # Format leaderboard entries
+        for i, entry in enumerate(leaderboard_data, 1):
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "👔"
+            value = (
+                f"Highest success: **{entry['highest_success']}**\n"
+                f"Average success: {entry['avg_success']:.1f}\n"
+                f"Total attempts: {entry['total_attempts']}"
+            )
+            embed.add_field(
+                name=f"{medal} #{i} {entry['username']}",
+                value=value,
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="stats", description="View your command usage statistics")
     async def stats(self, ctx):
@@ -122,34 +162,6 @@ class Fun(commands.Cog):
             embed.add_field(
                 name="Roll Stats",
                 value=roll_str,
-                inline=False
-            )
-
-        await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name="leaderboard", description="View command leaderboard")
-    async def leaderboard(self, ctx, command: str):
-        """View leaderboard for a specific command"""
-        leaderboard_data = self.db.get_leaderboard(command)
-        
-        if not leaderboard_data:
-            await ctx.send(f"No data available for command: {command}")
-            return
-
-        embed = create_embed(
-            title=f"Leaderboard for {command}",
-            color=discord.Color.gold().value
-        )
-
-        # Format leaderboard entries
-        for i, entry in enumerate(leaderboard_data, 1):
-            value = (
-                f"Usage count: {entry['usage_count']}\n"
-                f"Average value: {entry['avg_value']:.2f}"
-            )
-            embed.add_field(
-                name=f"{i}. {entry['username']}",
-                value=value,
                 inline=False
             )
 
