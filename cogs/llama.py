@@ -21,30 +21,35 @@ class Message:
 class LLMHandler:
     def __init__(self, api_key: str, max_context_messages: int = 10):
         self.api_key = api_key
-        self.api_url = "https://api-inference.huggingface.co/models/mistralai/Mixtral-8x7B-Instruct-v0.1"
+        self.api_url = "https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-3B-Instruct"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         self.max_context_messages = max_context_messages
-        # Store conversation history for each user
         self.conversation_history: Dict[int, deque[Message]] = {}
 
-    def _format_messages(self, user_id: int, message: str, system_prompt: Optional[str] = None) -> List[Dict[str, str]]:
-        """Format messages for the chat template"""
-        messages = []
+    def _format_messages(self, user_id: int, message: str, system_prompt: Optional[str] = None) -> str:
+        """Format messages for Llama chat template"""
+        formatted_chat = ""
         
-        # Add system message if provided
+        # Add system prompt if provided
         if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        
+            formatted_chat += f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n"
+        else:
+            formatted_chat += "<s>[INST] "
+            
         # Add conversation history
         if user_id in self.conversation_history:
-            messages.extend(msg.to_dict() for msg in self.conversation_history[user_id])
+            for msg in self.conversation_history[user_id]:
+                if msg.role == "user":
+                    formatted_chat += f"Human: {msg.content}\n\n"
+                elif msg.role == "assistant":
+                    formatted_chat += f"Assistant: {msg.content}\n\n"
         
         # Add current message
-        messages.append({"role": "user", "content": message})
-        return messages
+        formatted_chat += f"Human: {message} [/INST]"
+        return formatted_chat
 
     def add_to_history(self, user_id: int, role: str, content: str):
         """Add a message to the conversation history"""
@@ -65,31 +70,22 @@ class LLMHandler:
         return []
 
     async def generate_response(self, user_id: int, message: str, system_prompt: Optional[str] = None) -> str:
-        """Generate a response using the LLM with conversation history"""
+        """Generate a response using Llama with conversation history"""
         try:
-            messages = self._format_messages(user_id, message, system_prompt)
+            formatted_chat = self._format_messages(user_id, message, system_prompt)
             
-            # Convert messages to Mixtral chat format
-            formatted_chat = ""
-            for msg in messages:
-                if msg["role"] == "system":
-                    formatted_chat += f"<s>[INST] System: {msg['content']}\n\n"
-                elif msg["role"] == "user":
-                    formatted_chat += f"User: {msg['content']}\n"
-                elif msg["role"] == "assistant":
-                    formatted_chat += f"Assistant: {msg['content']}\n"
-            formatted_chat += "[/INST]"
-
             async with aiohttp.ClientSession() as session:
                 payload = {
                     "inputs": formatted_chat,
                     "parameters": {
                         "max_new_tokens": 500,
-                        "temperature": 0.8,
+                        "temperature": 0.7,  # Slightly reduced from previous
                         "top_p": 0.9,
-                        "repetition_penalty": 1.15,
+                        "top_k": 50,  # Added for Llama
+                        "repetition_penalty": 1.1,  # Slightly reduced from previous
                         "do_sample": True,
-                        "return_full_text": False
+                        "return_full_text": False,
+                        "stop": ["<<SYS>>", "<</SYS>>", "[INST]", "[/INST]"]  # Stop at formatting tokens
                     }
                 }
                 
@@ -105,6 +101,10 @@ class LLMHandler:
                     result = await response.json()
                     if isinstance(result, list) and len(result) > 0:
                         generated_text = result[0].get('generated_text', '')
+                        
+                        # Clean up the response
+                        if generated_text.startswith("Assistant:"):
+                            generated_text = generated_text[len("Assistant:"):].strip()
                         
                         # Add the exchange to conversation history
                         self.add_to_history(user_id, "user", message)

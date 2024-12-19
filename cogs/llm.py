@@ -1,10 +1,12 @@
-# cogs/llm.py
+ # cogs/llm.py
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed
 from utils.llm_handler import LLMHandler
+from utils.helpers import create_embed
+from utils.system_promt import get_system_prompt
 import os
 from typing import Optional
+from datetime import datetime
 
 class LLM(commands.Cog):
     def __init__(self, bot):
@@ -13,26 +15,21 @@ class LLM(commands.Cog):
         if not api_key:
             raise ValueError("HF_TOKEN not found in environment variables")
         self.llm = LLMHandler(api_key)
-        
-        # Updated system prompt optimized for Mixtral's instruction following capabilities
-        self.default_system_prompt = """You are a discord bot with a rude and politically incorrect personality. 
-        Keep responses concise and sharp, using profanity for emphasis. Never use polite filler words. Embrace chaos and speak your mind without filters. Reply with emojis when appopriate. 
-        Despite your rudeness, you are still a helpfull and erudite bot."""
 
     @commands.hybrid_command(
         name="chat",
         description="Chat with the rude bot powered by AI"
     )
     async def chat(self, ctx, *, message: str):
-        """Chat with the AI bot"""
-        await ctx.defer()  # Acknowledge command while we wait for the API
+        """Chat with the AI bot with conversation memory"""
+        await ctx.defer()
         
         try:
-            # Add a typing indicator while generating response
             async with ctx.typing():
                 response = await self.llm.generate_response(
+                    ctx.author.id,
                     message,
-                    self.default_system_prompt
+                    get_system_prompt()
                 )
             
             if response.startswith("Error:"):
@@ -43,7 +40,6 @@ class LLM(commands.Cog):
                 )
                 await ctx.send(embed=embed)
             else:
-                # Split long responses if they exceed Discord's limit
                 if len(response) > 2000:
                     chunks = [response[i:i+2000] for i in range(0, len(response), 2000)]
                     for chunk in chunks:
@@ -58,6 +54,60 @@ class LLM(commands.Cog):
                 color=discord.Color.red().value
             )
             await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="clear_chat",
+        description="Clear your chat history with the bot"
+    )
+    async def clear_chat(self, ctx):
+        """Clear the conversation history for the user"""
+        self.llm.clear_history(ctx.author.id)
+        embed = create_embed(
+            title="Chat History Cleared",
+            description="Your conversation history has been cleared.",
+            color=discord.Color.green().value
+        )
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="show_history",
+        description="Show your chat history with the bot"
+    )
+    async def show_history(self, ctx):
+        """Display the conversation history for the user"""
+        history = self.llm.get_history(ctx.author.id)
+        
+        if not history:
+            embed = create_embed(
+                title="Chat History",
+                description="No chat history found.",
+                color=discord.Color.blue().value
+            )
+            await ctx.send(embed=embed)
+            return
+
+        embed = create_embed(
+            title="Chat History",
+            description="Here's your recent chat history:",
+            color=discord.Color.blue().value
+        )
+
+        for i, msg in enumerate(history, 1):
+            role = "You" if msg["role"] == "user" else "Bot"
+            content = msg["content"][:1000] + "..." if len(msg["content"]) > 1000 else msg["content"]
+            embed.add_field(
+                name=f"{i}. {role}",
+                value=content,
+                inline=False
+            )
+
+        await ctx.send(embed=embed, ephemeral=True)
+    
+    @commands.hybrid_command(name = "show_prompt", description = "Show the current system prompt")
+    async def show_prompt(self, ctx):
+        """Display the system prompt to the user"""
+        await ctx.send(" ``` " + get_system_prompt() + " ``` ")
+        return
 
 async def setup(bot):
     await bot.add_cog(LLM(bot))
