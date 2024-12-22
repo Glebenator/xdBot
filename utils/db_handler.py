@@ -29,7 +29,12 @@ class DatabaseHandler:
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
                     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    total_success INTEGER DEFAULT 0,
+                    success_streak INTEGER DEFAULT 0,
+                    last_success_check TIMESTAMP,
+                    has_reroll_ability BOOLEAN DEFAULT 0,
+                    reroll_count INTEGER DEFAULT 0
                 )
             ''')
 
@@ -96,6 +101,29 @@ class DatabaseHandler:
                     last_active = CURRENT_TIMESTAMP
             ''', (user_id, username, username))
             conn.commit()
+    
+    def unlock_reroll_ability(self, user_id: int) -> None:
+        """Unlock the reroll ability for a user"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE users
+                SET has_reroll_ability = 1
+                WHERE user_id = ?
+            ''', (user_id,))
+            conn.commit()
+
+    def has_reroll_ability(self, user_id: int) -> bool:
+        """Check if user has unlocked the reroll ability"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT has_reroll_ability
+                FROM users
+                WHERE user_id = ?
+            ''', (user_id,))
+            result = cursor.fetchone()
+            return bool(result and result['has_reroll_ability'])
 
     def log_command_usage(self, user_id: int, command_name: str, 
                          success_level: Optional[int] = None,
@@ -286,5 +314,29 @@ class DatabaseHandler:
                     ORDER BY total_count DESC
                     LIMIT ?
                 ''', (limit,))
+    
+    def get_success_stats(self, user_id: int) -> Dict[str, Any]:
+        """Get comprehensive success stats for a user"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT 
+                    total_success,
+                    success_streak,
+                    has_reroll_ability,
+                    last_success_check
+                FROM users
+                WHERE user_id = ?
+            ''', (user_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                return dict(result)
+            return {
+                'total_success': 0,
+                'success_streak': 0,
+                'has_reroll_ability': False,
+                'last_success_check': None
+            }
             
             return [dict(row) for row in cursor.fetchall()]
