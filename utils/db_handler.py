@@ -19,24 +19,38 @@ class DatabaseHandler:
         return conn
 
     def init_database(self) -> None:
-        """Initialize database tables"""
+        """Initialize database tables and add new columns if needed"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Create users table
+            # First create the users table if it doesn't exist
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
                     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    total_success INTEGER DEFAULT 0,
-                    success_streak INTEGER DEFAULT 0,
-                    last_success_check TIMESTAMP,
-                    has_reroll_ability BOOLEAN DEFAULT 0,
-                    reroll_count INTEGER DEFAULT 0
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+            # Check for and add new columns if they don't exist
+            cursor.execute('PRAGMA table_info(users)')
+            existing_columns = {row['name'] for row in cursor.fetchall()}
+
+            # Add new columns if they don't exist
+            new_columns = {
+                'total_success': 'INTEGER DEFAULT 0',
+                'success_streak': 'INTEGER DEFAULT 0',
+                'last_success_check': 'TIMESTAMP',
+                'has_reroll_ability': 'BOOLEAN DEFAULT 0'
+            }
+
+            for column, data_type in new_columns.items():
+                if column not in existing_columns:
+                    try:
+                        cursor.execute(f'ALTER TABLE users ADD COLUMN {column} {data_type}')
+                    except Exception as e:
+                        print(f"Error adding column {column}: {e}")
 
             # Create command_usage table
             cursor.execute('''
@@ -75,7 +89,7 @@ class DatabaseHandler:
                 )
             ''')
 
-            # Create word_stats table for quick access to totals
+            # Create word_stats table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS word_stats (
                     user_id INTEGER,
@@ -101,7 +115,7 @@ class DatabaseHandler:
                     last_active = CURRENT_TIMESTAMP
             ''', (user_id, username, username))
             conn.commit()
-    
+
     def unlock_reroll_ability(self, user_id: int) -> None:
         """Unlock the reroll ability for a user"""
         with self.get_connection() as conn:
@@ -138,30 +152,6 @@ class DatabaseHandler:
             ''', (user_id, command_name, success_level, roll_value))
             conn.commit()
 
-    def log_word_usage(self, user_id: int, word: str, 
-                    message_id: Optional[int] = None,
-                    channel_id: Optional[int] = None) -> None:
-        """Log usage of a tracked word"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Log individual usage
-            cursor.execute('''
-                INSERT INTO word_usage (user_id, word, message_id, channel_id)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, word, message_id, channel_id))
-
-            # Update stats
-            cursor.execute('''
-                INSERT INTO word_stats (user_id, word, usage_count, last_used)
-                VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-                ON CONFLICT(user_id, word) DO UPDATE SET
-                    usage_count = usage_count + 1,
-                    last_used = CURRENT_TIMESTAMP
-            ''', (user_id, word))
-            
-            conn.commit()
-
     def update_command_cooldown(self, user_id: int, command_name: str) -> None:
         """Update command cooldown timestamp"""
         with self.get_connection() as conn:
@@ -187,47 +177,103 @@ class DatabaseHandler:
                 return datetime.fromisoformat(result['last_used'])
             return None
 
-    def get_user_stats(self, user_id: int) -> Dict[str, Any]:
-        """Get comprehensive stats for a user"""
+    def update_total_success(self, user_id: int, success_level: int) -> None:
+        """Update user's total success score"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE users
+                SET total_success = COALESCE(total_success, 0) + ?
+                WHERE user_id = ?
+            ''', (success_level, user_id))
+            conn.commit()
+
+    def update_success_streak(self, user_id: int) -> Dict[str, Any]:
+        """Update user's success streak and return streak info"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Get command usage counts
+            # Get user's last success check
             cursor.execute('''
-                SELECT command_name, COUNT(*) as count
-                FROM command_usage
+                SELECT last_success_check, success_streak
+                FROM users
                 WHERE user_id = ?
-                GROUP BY command_name
             ''', (user_id,))
-            command_counts = {row['command_name']: row['count'] 
-                            for row in cursor.fetchall()}
+            result = cursor.fetchone()
+            
+            current_time = datetime.now()
+            streak_info = {
+                'streak_continued': False,
+                'streak_reset': False,
+                'current_streak': 0
+            }
+            
+            if result and result['last_success_check']:
+                last_check = datetime.fromisoformat(result['last_success_check'])
+                current_streak = result['success_streak'] or 0  # Handle NULL value
+                
+                # Calculate days between checks
+                days_diff = (current_time.date() - last_check.date()).days
+                
+                if days_diff == 1:
+                    # Streak continues
+                    current_streak += 1
+                    streak_info['streak_continued'] = True
+                elif days_diff == 0:
+                    # Already checked today, maintain streak
+                    pass
+                else:
+                    # Streak broken
+                    current_streak = 1
+                    streak_info['streak_reset'] = True
+            else:
+                # First time checking
+                current_streak = 1
+            
+            # Update user's streak and last check time
+            cursor.execute('''
+                UPDATE users
+                SET success_streak = ?,
+                    last_success_check = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+            ''', (current_streak, user_id))
+            
+            streak_info['current_streak'] = current_streak
+            conn.commit()
+            return streak_info
 
-            # Get success command stats
+    def get_success_stats(self, user_id: int) -> Dict[str, Any]:
+        """Get comprehensive success stats for a user"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
             cursor.execute('''
                 SELECT 
-                    COUNT(*) as total_successes,
-                    AVG(success_level) as avg_success,
-                    MAX(success_level) as max_success
-                FROM command_usage
-                WHERE user_id = ? AND command_name = 'успех'
+                    u.total_success,
+                    u.success_streak,
+                    u.has_reroll_ability,
+                    u.last_success_check,
+                    COUNT(DISTINCT cu.id) as total_attempts,
+                    MAX(cu.success_level) as highest_success,
+                    AVG(CAST(cu.success_level AS FLOAT)) as avg_success
+                FROM users u
+                LEFT JOIN command_usage cu 
+                    ON u.user_id = cu.user_id 
+                    AND cu.command_name = 'успех'
+                WHERE u.user_id = ?
+                GROUP BY u.user_id
             ''', (user_id,))
-            success_stats = dict(cursor.fetchone())
-
-            # Get roll command stats
-            cursor.execute('''
-                SELECT 
-                    COUNT(*) as total_rolls,
-                    AVG(roll_value) as avg_roll,
-                    MAX(roll_value) as max_roll
-                FROM command_usage
-                WHERE user_id = ? AND command_name = 'roll'
-            ''', (user_id,))
-            roll_stats = dict(cursor.fetchone())
-
+            
+            result = cursor.fetchone()
+            if result:
+                return dict(result)
             return {
-                'command_counts': command_counts,
-                'success_stats': success_stats,
-                'roll_stats': roll_stats
+                'total_success': 0,
+                'success_streak': 0,
+                'has_reroll_ability': False,
+                'last_success_check': None,
+                'total_attempts': 0,
+                'highest_success': 0,
+                'avg_success': 0
             }
 
     def get_success_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
@@ -237,17 +283,53 @@ class DatabaseHandler:
             cursor.execute('''
                 SELECT 
                     u.username,
-                    COUNT(*) as total_attempts,
-                    MAX(cu.success_level) as highest_success,
-                    AVG(cu.success_level) as avg_success
-                FROM command_usage cu
-                JOIN users u ON cu.user_id = u.user_id
-                WHERE command_name = 'успех'
-                GROUP BY cu.user_id, u.username
-                ORDER BY avg_success DESC, total_attempts ASC
+                    COALESCE(u.total_success, 0) as total_success,
+                    COALESCE(u.success_streak, 0) as success_streak,
+                    COALESCE(u.has_reroll_ability, 0) as has_reroll_ability,
+                    COUNT(DISTINCT cu.id) as total_attempts,
+                    COALESCE(MAX(cu.success_level), 0) as highest_success,
+                    COALESCE(AVG(CAST(cu.success_level AS FLOAT)), 0) as avg_success
+                FROM users u
+                LEFT JOIN command_usage cu 
+                    ON u.user_id = cu.user_id 
+                    AND cu.command_name = 'успех'
+                WHERE COALESCE(u.total_success, 0) > 0 
+                    OR EXISTS (
+                        SELECT 1 
+                        FROM command_usage cu2 
+                        WHERE cu2.user_id = u.user_id 
+                        AND cu2.command_name = 'успех'
+                    )
+                GROUP BY u.user_id, u.username, u.total_success, u.success_streak, u.has_reroll_ability
+                ORDER BY COALESCE(u.total_success, 0) DESC, COALESCE(u.success_streak, 0) DESC
                 LIMIT ?
             ''', (limit,))
+            
             return [dict(row) for row in cursor.fetchall()]
+
+    def log_word_usage(self, user_id: int, word: str, 
+                      message_id: Optional[int] = None,
+                      channel_id: Optional[int] = None) -> None:
+        """Log usage of a tracked word"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Log individual usage
+            cursor.execute('''
+                INSERT INTO word_usage (user_id, word, message_id, channel_id)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, word, message_id, channel_id))
+
+            # Update stats
+            cursor.execute('''
+                INSERT INTO word_stats (user_id, word, usage_count, last_used)
+                VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, word) DO UPDATE SET
+                    usage_count = usage_count + 1,
+                    last_used = CURRENT_TIMESTAMP
+            ''', (user_id, word))
+            
+            conn.commit()
 
     def get_user_word_stats(self, user_id: int) -> List[Dict[str, Any]]:
         """Get word usage statistics for a user"""
@@ -262,23 +344,6 @@ class DatabaseHandler:
                 WHERE user_id = ?
                 ORDER BY usage_count DESC
             ''', (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_word_history(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent word usage history for a user"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    word,
-                    used_at,
-                    message_id,
-                    channel_id
-                FROM word_usage
-                WHERE user_id = ?
-                ORDER BY used_at DESC
-                LIMIT ?
-            ''', (user_id, limit))
             return [dict(row) for row in cursor.fetchall()]
 
     def get_word_leaderboard(self, word: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
@@ -314,29 +379,5 @@ class DatabaseHandler:
                     ORDER BY total_count DESC
                     LIMIT ?
                 ''', (limit,))
-    
-    def get_success_stats(self, user_id: int) -> Dict[str, Any]:
-        """Get comprehensive success stats for a user"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT 
-                    total_success,
-                    success_streak,
-                    has_reroll_ability,
-                    last_success_check
-                FROM users
-                WHERE user_id = ?
-            ''', (user_id,))
-            result = cursor.fetchone()
-            
-            if result:
-                return dict(result)
-            return {
-                'total_success': 0,
-                'success_streak': 0,
-                'has_reroll_ability': False,
-                'last_success_check': None
-            }
             
             return [dict(row) for row in cursor.fetchall()]
