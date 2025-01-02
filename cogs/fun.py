@@ -6,17 +6,15 @@ from utils.helpers import create_embed
 from utils.db_handler import DatabaseHandler
 from utils.rng import RandomOrgRNG
 from datetime import datetime, timedelta
+import logging
 import random
 import os
 
 class SuccessView(View):
-    def __init__(self, cog, user_id: int, original_message: str):
+    def __init__(self):
         super().__init__(timeout=None)  # Buttons won't timeout
-        self.cog = cog
-        self.user_id = user_id
-        self.original_message = original_message
         
-        # Add reroll button
+        # Add reroll button - no need to store user ID in custom_id anymore
         reroll_button = Button(
             style=discord.ButtonStyle.primary,
             label="Reroll",
@@ -55,31 +53,39 @@ class Fun(commands.Cog):
 
     async def handle_success_roll(self, ctx, interaction=None) -> tuple[str, int]:
         """Handle the success roll logic"""
-        number = await self.rng.randint(1, 100)
-        message_part, success_level = await self.process_success_roll(number)
-        
-        user = interaction.user if interaction else ctx.author
-        message = f"{user.mention} {message_part}"
-        
-        # Update database
-        self.db.log_command_usage(user.id, "успех", success_level=success_level)
-        self.db.update_total_success(user.id, success_level)
-        
-        # Update streak and get streak info
-        streak_info = self.db.update_success_streak(user.id)
-        
-        if streak_info['streak_continued']:
-            message += f"\n🔥 Streak continued! Current streak: {streak_info['current_streak']} days"
+        try:
+            number = await self.rng.randint(1, 100)
+            mention = ctx.author.mention    
+            # Log the roll result
+            logging.info(f"Success roll for {ctx.author.name}#{ctx.author.discriminator} (ID: {ctx.author.id}): {number}")
             
-            # Unlock reroll ability at 7 day streak
-            if streak_info['current_streak'] == 7:
-                self.db.unlock_reroll_ability(user.id)
-                message += "\n🎁 Congratulations! You've unlocked the reroll ability!"
+            message_part, success_level = await self.process_success_roll(number)
+            
+            user = interaction.user if interaction else ctx.author
+            message = f"{user.mention} {message_part}"
+            
+            # Update database
+            self.db.log_command_usage(user.id, "успех", success_level=success_level)
+            self.db.update_total_success(user.id, success_level)
+            
+            # Update streak and get streak info
+            streak_info = self.db.update_success_streak(user.id)
+            
+            if streak_info['streak_continued']:
+                message += f"\n🔥 Streak continued! Current streak: {streak_info['current_streak']} days"
                 
-        elif streak_info['streak_reset']:
-            message += f"\n❌ Streak reset! Starting new streak!"
-            
-        return message, success_level
+                # Unlock reroll ability at 7 day streak
+                if streak_info['current_streak'] == 7:
+                    self.db.unlock_reroll_ability(user.id)
+                    message += "\n🎁 Congratulations! You've unlocked the reroll ability!"
+                    
+            elif streak_info['streak_reset']:
+                message += f"\n❌ Streak reset! Starting new streak!"
+                
+            return message, success_level
+        except Exception as e:
+            logging.error(f"Error processing success roll: {str(e)}")
+            raise
 
     @commands.hybrid_command(name="успех", description="See how successful you are today using true randomness (once per 12h)")
     async def success(self, ctx):
@@ -118,7 +124,7 @@ class Fun(commands.Cog):
             # Check if user has reroll ability
             view = None
             if self.db.has_reroll_ability(user_id):
-                view = SuccessView(self, user_id, message)
+                view = SuccessView()
             
             await ctx.send(message, view=view)
             
@@ -127,34 +133,117 @@ class Fun(commands.Cog):
 
     async def on_button_click(self, interaction: discord.Interaction):
         """Handle button clicks for success command"""
-        if interaction.data["custom_id"] != "success_reroll":
+        # First check if this is a button interaction
+        if interaction.type != discord.InteractionType.component:
             return
             
-        # Verify this is the user's own success roll
-        view = interaction.message.view
-        if not view or interaction.user.id != view.user_id:
+        # Safely get custom_id
+        if not interaction.data or 'custom_id' not in interaction.data:
+            return
+            
+        # Check if this is a success reroll button
+        if interaction.data['custom_id'] != "success_reroll":
+            return
+            
+        try:
+            # Get the original user from the message content
+            message_content = interaction.message.content
+            if not message_content:
+                await interaction.response.send_message(
+                    "Could not find the original message content.", 
+                    ephemeral=True
+                )
+                return
+                
+            # Extract user ID from message content (format: "<@userId> rest of message")
+            try:
+                first_word = message_content.split()[0]
+                if not first_word.startswith('<@') or not first_word.endswith('>'):
+                    await interaction.response.send_message(
+                        "Could not identify the original roll owner.", 
+                        ephemeral=True
+                    )
+                    return
+                    
+                mentioned_user_id = int(first_word.strip('<@!>'))  # Handle both <@id> and <@!id> formats
+            except (IndexError, ValueError) as e:
+                await interaction.response.send_message(
+                    "Could not identify the original roll owner.", 
+                    ephemeral=True
+                )
+                print(f"Error parsing user ID: {str(e)}, message content: {message_content}")
+                return
+
+            # Check if this is the user's own success roll
+            if interaction.user.id != mentioned_user_id:
+                await interaction.response.send_message(
+                    "You can only reroll your own success check!", 
+                    ephemeral=True
+                )
+                return
+
+            # Check if user has reroll ability
+            if not self.db.has_reroll_ability(interaction.user.id):
+                await interaction.response.send_message(
+                    "You don't have the reroll ability!", 
+                    ephemeral=True
+                )
+                return
+
+            # Check cooldown
+            last_used = self.db.get_command_cooldown(interaction.user.id, "успех")
+            if not last_used:
+                await interaction.response.send_message(
+                    "No active успех roll to reroll!", 
+                    ephemeral=True
+                )
+                return
+
+            # Check if still within cooldown period
+            current_time = datetime.now()
+            if current_time > last_used + timedelta(hours=12):
+                await interaction.response.send_message(
+                    "This success check has expired! Use !успех for a new roll.", 
+                    ephemeral=True
+                )
+                return
+                
+            # Process reroll
+            await interaction.response.defer()
+            
+            try:
+                message, success_level = await self.handle_success_roll(None, interaction)
+                
+                # Update the original message with new roll and remove the button
+                await interaction.message.edit(content=message, view=None)
+            except Exception as e:
+                await interaction.followup.send(
+                    "Error generating new roll. Please try again later.", 
+                    ephemeral=True
+                )
+                print(f"Error in reroll generation: {str(e)}")
+                
+        except discord.errors.Forbidden as e:
             await interaction.response.send_message(
-                "You can only reroll your own success check!", 
+                "I don't have permission to modify that message.", 
                 ephemeral=True
             )
-            return
-            
-        # Check if button should still be active (within same cooldown period)
-        last_used = self.db.get_command_cooldown(interaction.user.id, "успех")
-        if not last_used:
+        except discord.errors.NotFound:
             await interaction.response.send_message(
-                "This success check is too old to reroll!", 
+                "The original message was not found.", 
                 ephemeral=True
             )
-            return
-            
-        # Process reroll
-        await interaction.response.defer()
-        
-        message, success_level = await self.handle_success_roll(None, interaction)
-        
-        # Update the original message with new roll and remove the reroll button
-        await interaction.message.edit(content=message, view=None)
+        except discord.errors.HTTPException as e:
+            await interaction.response.send_message(
+                "Failed to process reroll. Please try again later.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                "An unexpected error occurred. Please try again later.",
+                ephemeral=True
+            )
+            print(f"Unexpected error in reroll button handler: {str(e)}")
 
     @commands.hybrid_command(
     name="топ",

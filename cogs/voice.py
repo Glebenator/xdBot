@@ -6,6 +6,18 @@ import yt_dlp
 from typing import Dict, Optional
 import asyncio
 from utils.helpers import create_embed
+from typing import Dict, Optional, Any
+from dataclasses import dataclass
+
+@dataclass
+class EffectConfig:
+    name: str
+    default_intensity: float
+    min_intensity: float
+    max_intensity: float
+    step: float
+    param_name: str
+    template: str
 
 # YT-DLP configuration
 YTDLP_OPTIONS = {
@@ -74,6 +86,64 @@ STREAM_FFMPEG_OPTIONS = {
     )
 }
 
+
+AUDIO_EFFECTS = {
+    'none': EffectConfig(
+        name='Normal',
+        default_intensity=0,
+        min_intensity=0,
+        max_intensity=0,
+        step=0,
+        param_name='',
+        template='-vn -b:a 192k'
+    ),
+    'bassboost': EffectConfig(
+        name='Bass Boost',
+        default_intensity=15,
+        min_intensity=5,
+        max_intensity=50,
+        step=5,
+        param_name='gain',
+        template='-vn -b:a 192k -af equalizer=f=40:width_type=h:width=50:g={gain}'
+    ),
+    'nightcore': EffectConfig(
+        name='Nightcore',
+        default_intensity=1.25,
+        min_intensity=1.1,
+        max_intensity=1.5,
+        step=0.05,
+        param_name='rate',
+        template='-vn -b:a 192k -af asetrate=44100*{rate},aresample=44100,atempo=0.8'
+    ),
+    'vaporwave': EffectConfig(
+        name='Vaporwave',
+        default_intensity=0.8,
+        min_intensity=0.5,
+        max_intensity=0.9,
+        step=0.05,
+        param_name='rate',
+        template='-vn -b:a 192k -af asetrate=44100*{rate},aresample=44100,atempo=1.25'
+    ),
+    'tremolo': EffectConfig(
+        name='Tremolo',
+        default_intensity=5,
+        min_intensity=2,
+        max_intensity=10,
+        step=1,
+        param_name='freq',
+        template='-vn -b:a 192k -af tremolo=f={freq}:d=0.7'
+    ),
+    'echo': EffectConfig(
+        name='Echo',
+        default_intensity=40,
+        min_intensity=20,
+        max_intensity=100,
+        step=10,
+        param_name='delay',
+        template='-vn -b:a 192k -af aecho=0.8:0.8:{delay}:0.5'
+    )
+}
+
 def get_ffmpeg_options(self, is_live: bool, platform: str) -> dict:
         """Get appropriate FFmpeg options based on content type and platform"""
         if is_live:
@@ -96,6 +166,30 @@ def get_ffmpeg_options(self, is_live: bool, platform: str) -> dict:
         else:
             return FFMPEG_OPTIONS.copy()
         
+class EffectControlView(discord.ui.View):
+    def __init__(self, cog, effect_name: str):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.effect_name = effect_name
+        
+        # Add control buttons if the effect is adjustable
+        if effect_name != 'none':
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                emoji="➖",
+                custom_id=f"decrease_{effect_name}"
+            ))
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.danger,
+                label="Reset",
+                custom_id=f"reset_{effect_name}"
+            ))
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                emoji="➕",
+                custom_id=f"increase_{effect_name}"
+            ))
+
 class MusicControlView(View):
     def __init__(self, voice_cog, is_live=False):
         super().__init__(timeout=None)  # Buttons won't timeout
@@ -116,7 +210,175 @@ class Voice(commands.Cog):
         self.ytdlp = yt_dlp.YoutubeDL(YTDLP_OPTIONS)
         self.current_track: Dict[int, dict] = {}
         self.playing_messages: Dict[int, discord.Message] = {}
+        self.effect_intensities: Dict[int, Dict[str, float]] = {}  # Track intensity per guild per effect
+        self.effect_messages: Dict[int, discord.Message] = {}  # Track effect control messages
+        self.current_effect: Dict[int, str] = {}  # Track current effect for each guild
 
+
+
+#---effect control---
+    def get_effect_intensity(self, guild_id: int, effect_name: str) -> float:
+        """Get the current intensity for an effect"""
+        if guild_id not in self.effect_intensities:
+            self.effect_intensities[guild_id] = {}
+        return self.effect_intensities[guild_id].get(
+            effect_name,
+            AUDIO_EFFECTS[effect_name].default_intensity
+        )
+    def set_effect_intensity(self, guild_id: int, effect_name: str, intensity: float) -> None:
+        """Set the intensity for an effect"""
+        if guild_id not in self.effect_intensities:
+            self.effect_intensities[guild_id] = {}
+        self.effect_intensities[guild_id][effect_name] = intensity
+
+    async def update_effect_message(self, guild_id: int, effect_name: str) -> None:
+        """Update the effect control message with current intensity"""
+        if guild_id not in self.effect_messages:
+            return
+
+        effect_config = AUDIO_EFFECTS[effect_name]
+        current_intensity = self.get_effect_intensity(guild_id, effect_name)
+        
+        embed = create_embed(
+            title=f"Effect: {effect_config.name}",
+            description=(
+                f"Current intensity: {current_intensity}\n"
+                f"Min: {effect_config.min_intensity} | "
+                f"Max: {effect_config.max_intensity} | "
+                f"Step: {effect_config.step}"
+            ),
+            color=discord.Color.blue().value
+        )
+        
+        try:
+            await self.effect_messages[guild_id].edit(embed=embed)
+        except discord.NotFound:
+            self.effect_messages.pop(guild_id, None)
+
+    @commands.command(name="effect", description="Apply an audio effect to the currently playing track")
+    async def apply_effect(self, ctx: commands.Context, effect_name: str) -> None:
+        """Apply an audio effect to the currently playing track"""
+        if effect_name not in AUDIO_EFFECTS:
+            effects_list = ', '.join(f'`{effect}`' for effect in AUDIO_EFFECTS.keys())
+            await ctx.send(f"Invalid effect! Available effects: {effects_list}")
+            return
+
+        if not ctx.guild.id in self.current_track:
+            await ctx.send("Nothing is playing!")
+            return
+
+        voice_client = self.get_voice_client(ctx)
+        if not voice_client:
+            await ctx.send("Not connected to a voice channel!")
+            return
+
+        # Set initial intensity if not already set
+        if effect_name != 'none':
+            if ctx.guild.id not in self.effect_intensities:
+                self.effect_intensities[ctx.guild.id] = {}
+            if effect_name not in self.effect_intensities[ctx.guild.id]:
+                self.effect_intensities[ctx.guild.id][effect_name] = AUDIO_EFFECTS[effect_name].default_intensity
+
+        track_data = self.current_track[ctx.guild.id]
+        current_position = track_data['start_time']
+        self.current_effect[ctx.guild.id] = effect_name
+
+        # Get effect options with current intensity
+        if effect_name == 'none':
+            options = AUDIO_EFFECTS['none'].template
+        else:
+            effect_config = AUDIO_EFFECTS[effect_name]
+            intensity = self.get_effect_intensity(ctx.guild.id, effect_name)
+            options = effect_config.template.format(**{effect_config.param_name: intensity})
+
+        # Apply the effect
+        voice_client.stop()
+        effect_options = {
+            'before_options': f'{FFMPEG_OPTIONS["before_options"]} -ss {current_position}',
+            'options': options
+        }
+
+        audio_source = discord.FFmpegPCMAudio(
+            track_data['url'],
+            **effect_options
+        )
+
+        voice_client.play(
+            audio_source,
+            after=lambda e: print(f'Player error: {e}') if e else None
+        )
+
+        # Send or update control message
+        effect_config = AUDIO_EFFECTS[effect_name]
+        embed = create_embed(
+            title=f"Effect: {effect_config.name}",
+            description=(
+                "No adjustments available" if effect_name == 'none' else
+                f"Current intensity: {self.get_effect_intensity(ctx.guild.id, effect_name)}\n"
+                f"Min: {effect_config.min_intensity} | "
+                f"Max: {effect_config.max_intensity} | "
+                f"Step: {effect_config.step}"
+            ),
+            color=discord.Color.blue().value
+        )
+
+        # Delete old effect message if it exists
+        if ctx.guild.id in self.effect_messages:
+            try:
+                await self.effect_messages[ctx.guild.id].delete()
+            except discord.NotFound:
+                pass
+
+        # Send new effect message with controls
+        message = await ctx.send(
+            embed=embed,
+            view=EffectControlView(self, effect_name)
+        )
+        self.effect_messages[ctx.guild.id] = message
+
+    async def handle_effect_button(self, interaction: discord.Interaction) -> None:
+        """Handle effect control button interactions"""
+        custom_id = interaction.data["custom_id"]
+        guild_id = interaction.guild_id
+        
+        if guild_id not in self.current_effect:
+            await interaction.response.send_message("No effect currently active!", ephemeral=True)
+            return
+
+        effect_name = self.current_effect[guild_id]
+        effect_config = AUDIO_EFFECTS[effect_name]
+        current_intensity = self.get_effect_intensity(guild_id, effect_name)
+
+        if custom_id.startswith("decrease"):
+            new_intensity = max(
+                effect_config.min_intensity,
+                current_intensity - effect_config.step
+            )
+        elif custom_id.startswith("increase"):
+            new_intensity = min(
+                effect_config.max_intensity,
+                current_intensity + effect_config.step
+            )
+        elif custom_id.startswith("reset"):
+            new_intensity = effect_config.default_intensity
+        else:
+            await interaction.response.send_message("Invalid button!", ephemeral=True)
+            return
+
+        # Update intensity and reapply effect
+        self.set_effect_intensity(guild_id, effect_name, new_intensity)
+        await self.update_effect_message(guild_id, effect_name)
+        
+        # Get the context from the interaction
+        ctx = await self.bot.get_context(interaction.message)
+        await self.apply_effect(ctx, effect_name)
+        
+        # Acknowledge the button press
+        await interaction.response.send_message(
+            f"Effect intensity updated to {new_intensity}", 
+            ephemeral=True
+        )
+        #---------------
     def get_platform_name(self, url: str) -> str:
         """Identify the platform from the URL"""
         lower_url = url.lower()
@@ -365,6 +627,10 @@ class Voice(commands.Cog):
         custom_id = interaction.data["custom_id"]
         track_data = self.current_track.get(interaction.guild_id)
 
+        if custom_id.startswith(("increase_", "decrease_", "reset_")):
+            await self.handle_effect_button(interaction)
+            return
+    
         if not track_data:
             await self.send_temporary_response(interaction, "No track data available!")
             return
