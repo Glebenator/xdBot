@@ -19,19 +19,25 @@ class General(commands.Cog):
 
     @commands.hybrid_command(name="help", description="Shows this help message")
     async def help(self, ctx):
-        embed = discord.Embed(
-            title="Bot Help",
-            description="List of available commands:",
-            color=discord.Color.blue()
-        )
+        commands_list = list(self.bot.commands)
+        chunk_size = 10  # Adjust as needed
         
-        for command in self.bot.commands:
-            embed.add_field(
-                name=f"{command.name}",
-                value=command.description or "No description available",
-                inline=False
+        # Break commands into chunks
+        for i in range(0, len(commands_list), chunk_size):
+            chunk = commands_list[i:i + chunk_size]
+            embed = discord.Embed(
+                title=f"Bot Help (Page {i // chunk_size + 1})",
+                description="List of available commands:",
+                color=discord.Color.blue()
             )
             
-        await ctx.send(embed=embed)
+            for command in chunk:
+                embed.add_field(
+                    name=command.name,
+                    value=command.description or "No description available",
+                    inline=False
+                )
+            await ctx.send(embed=embed)
+
 async def setup(bot):
     await bot.add_cog(General(bot))
