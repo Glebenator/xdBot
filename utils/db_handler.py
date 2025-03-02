@@ -101,8 +101,101 @@ class DatabaseHandler:
                 )
             ''')
 
+             # Create command_rerolls table to track reroll usage
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS command_rerolls (
+                    user_id INTEGER,
+                    command_time TIMESTAMP,
+                    rerolled BOOLEAN DEFAULT 0,
+                    PRIMARY KEY (user_id, command_time),
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+            # Create prompts table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS prompts (
+                    model_name TEXT PRIMARY KEY,
+                    system_prompt TEXT NOT NULL,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_by INTEGER,
+                    FOREIGN KEY (updated_by) REFERENCES users (user_id)
+                )
+            ''')
+
+            # Create command_executions table to track exact execution times
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS command_executions (
+                    user_id INTEGER,
+                    command_name TEXT,
+                    execution_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, command_name),
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+
             conn.commit()
 
+
+    def get_prompt(self, model_name: str) -> Optional[str]:
+        """Get the system prompt for a specific model"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT system_prompt
+                FROM prompts
+                WHERE model_name = ?
+            ''', (model_name,))
+            result = cursor.fetchone()
+            return result['system_prompt'] if result else None
+        
+    def set_prompt(self, model_name: str, system_prompt: str, updated_by: int) -> None:
+        """Set or update the system prompt for a model"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO prompts (model_name, system_prompt, updated_by, last_updated)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(model_name) DO UPDATE SET
+                    system_prompt = ?,
+                    updated_by = ?,
+                    last_updated = CURRENT_TIMESTAMP
+            ''', (model_name, system_prompt, updated_by, system_prompt, updated_by))
+            conn.commit()
+
+    def get_prompt_history(self, model_name: str) -> List[Dict[str, Any]]:
+        """Get prompt update history for a model"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT p.*, u.username as updated_by_name
+                FROM prompts p
+                LEFT JOIN users u ON p.updated_by = u.user_id
+                WHERE p.model_name = ?
+                ORDER BY p.last_updated DESC
+            ''', (model_name,))
+            return [dict(row) for row in cursor.fetchall()]
+        
+    def add_reroll_usage(self, user_id: int, command_time: datetime) -> None:
+        """Track that a user has used their reroll for a specific успех command"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO command_rerolls (user_id, command_time, rerolled)
+                VALUES (?, ?, 1)
+            ''', (user_id, command_time))
+            conn.commit()
+
+    def has_rerolled(self, user_id: int, command_time: datetime) -> bool:
+        """Check if user has already rerolled for a specific успех command"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT rerolled FROM command_rerolls
+                WHERE user_id = ? AND command_time = ?
+            ''', (user_id, command_time))
+            result = cursor.fetchone()
+            return bool(result and result['rerolled'])
+    
     def update_user(self, user_id: int, username: str) -> None:
         """Update or create user record"""
         with self.get_connection() as conn:
@@ -381,3 +474,30 @@ class DatabaseHandler:
                 ''', (limit,))
             
             return [dict(row) for row in cursor.fetchall()]
+
+    def record_command_execution(self, user_id: int, command_name: str) -> datetime:
+        """Record the exact time a command was executed and return the timestamp"""
+        current_time = datetime.now()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO command_executions (user_id, command_name, execution_time)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, command_name) DO UPDATE SET
+                    execution_time = ?
+            ''', (user_id, command_name, current_time, current_time))
+            conn.commit()
+        return current_time
+
+    def get_command_execution_time(self, user_id: int, command_name: str) -> Optional[datetime]:
+        """Get the exact time a command was last executed"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT execution_time FROM command_executions
+                WHERE user_id = ? AND command_name = ?
+            ''', (user_id, command_name))
+            result = cursor.fetchone()
+            if result:
+                return datetime.fromisoformat(result['execution_time'])
+            return None

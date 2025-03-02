@@ -11,10 +11,6 @@ class Replies(commands.Cog):
         self.bot = bot
         # Initialize with default replies in the new format
         self.replies: Dict[str, dict] = {
-            "help": {
-                "response": "Need help? Use !help to see all available commands!",
-                "reactions": ["❓"]
-            }
         }
         self.load_replies()
 

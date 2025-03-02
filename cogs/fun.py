@@ -104,6 +104,9 @@ class Fun(commands.Cog):
                 return
 
         try:
+            # Record exact execution time
+            execution_time = self.db.record_command_execution(user_id, "успех")
+            
             message, success_level = await self.handle_success_roll(ctx)
             
             # Update cooldown
@@ -124,14 +127,56 @@ class Fun(commands.Cog):
                 await ctx.send("You don't have the reroll ability!")
                 return
 
-            # Check if user has an active успех roll they can reroll
-            last_used = self.db.get_command_cooldown(ctx.author.id, "успех")
-            if not last_used:
+            # Get exact execution time of last успех command
+            execution_time = self.db.get_command_execution_time(ctx.author.id, "успех")
+            if not execution_time:
                 await ctx.send("No active успех roll to reroll! Use !успех first.")
                 return
 
+            # Check if roll is still valid (within 12 hours)
+            current_time = datetime.now()
+            if current_time > execution_time + timedelta(hours=12):
+                await ctx.send("Your last success check has expired! Use !успех for a new roll.")
+                return
+
+            # Check if already rerolled this command
+            if self.db.has_rerolled(ctx.author.id, execution_time):
+                await ctx.send("You've already used your reroll for this успех check!")
+                return
+
+            # Get the previous success level from database
+            prev_success = None
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT success_level
+                    FROM command_usage
+                    WHERE user_id = ? AND command_name = 'успех'
+                    AND used_at >= ?
+                    ORDER BY used_at DESC
+                    LIMIT 1
+                ''', (ctx.author.id, last_used))
+                result = cursor.fetchone()
+                if result:
+                    prev_success = result['success_level']
+
+            if prev_success is not None:
+                # Subtract the previous success level from total_success
+                with self.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE users
+                        SET total_success = total_success - ?
+                        WHERE user_id = ?
+                    ''', (prev_success, ctx.author.id))
+                    conn.commit()
+
             # Process reroll
             message, success_level = await self.handle_success_roll(ctx)
+            
+            # Mark this command as rerolled with exact execution time
+            self.db.add_reroll_usage(ctx.author.id, execution_time)
+            
             await ctx.send(message)
 
         except Exception as e:
