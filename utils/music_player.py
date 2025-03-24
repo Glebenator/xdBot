@@ -2,7 +2,7 @@
 import discord
 import yt_dlp
 import asyncio
-from typing import Dict, Optional, Any, List, Tuple
+from typing import Dict, Optional, Any, List, Tuple, Callable
 import logging
 from utils.audio_constants import (
     FFMPEG_OPTIONS, 
@@ -23,6 +23,20 @@ class MusicPlayer:
         self.playing_messages: Dict[int, discord.Message] = {}
         # Maps guild_id -> discord.VoiceClient
         self.voice_clients: Dict[int, discord.VoiceClient] = {}
+        # After callbacks
+        self._after_callbacks: List[Callable[[int, Optional[Exception]], None]] = []
+        
+    def register_after_function(self, callback: Callable[[int, Optional[Exception]], None]) -> None:
+        """Register a callback to be called after a track finishes"""
+        self._after_callbacks.append(callback)
+        
+    async def _call_after_functions(self, guild_id: int, error: Optional[Exception] = None) -> None:
+        """Call all registered after functions"""
+        for callback in self._after_callbacks:
+            try:
+                await callback(guild_id, error)
+            except Exception as e:
+                logging.error(f"Error in after callback: {e}")
         
     def get_voice_client(self, ctx_or_interaction) -> Optional[discord.VoiceClient]:
         """Get the voice client for the current guild"""
@@ -81,40 +95,94 @@ class MusicPlayer:
                     options['quality'] = platform_opts['quality']
 
             self.ytdlp = yt_dlp.YoutubeDL(options)
-            info = self.ytdlp.extract_info(url, download=False)
+            try:
+                info = self.ytdlp.extract_info(url, download=False)
+            except Exception as e:
+                if 'YouTube' in platform:
+                    # Try alternative YouTube extraction if initial attempt fails
+                    logging.warning(f"First YouTube extraction attempt failed: {str(e)}. Trying alternative method...")
+                    # Try with different format option
+                    alt_options = options.copy()
+                    alt_options['format'] = 'best'  # Fallback to simpler format selection
+                    alt_options['youtube_include_dash_manifest'] = True  # Try with DASH manifest
+                    self.ytdlp = yt_dlp.YoutubeDL(alt_options)
+                    info = self.ytdlp.extract_info(url, download=False)
+                else:
+                    # Re-raise if not YouTube
+                    raise
             
-            if 'entries' in info:
+            if 'entries' in info and info['entries']:
                 info = info['entries'][0]
+            
+            # Check if we have a valid extracted info
+            if not info or 'url' not in info or 'title' not in info:
+                raise Exception(f"Could not extract video information from {url}")
 
             # Check if this is a livestream
             is_live = info.get('is_live', False)
             duration = None if is_live else info.get('duration', 0)
 
-            # Extract format information
+            # Safe handling of metadata
+            view_count = info.get('view_count')
+            like_count = info.get('like_count')
+            
+            # Make sure numeric values are properly handled
+            if view_count is None:
+                view_count = 0
+            if like_count is None:
+                like_count = 0
+            
+            # Extract format information safely
             formats = info.get('formats', [])
             best_format = None
             best_bitrate = 0
             
             for fmt in formats:
                 # Look for audio-only formats with the highest bitrate
-                if fmt.get('acodec') != 'none' and fmt.get('vcodec') in ('none', None):
-                    bitrate = fmt.get('abr', 0) or fmt.get('tbr', 0)
-                    if bitrate > best_bitrate:
+                if fmt and fmt.get('acodec') != 'none' and fmt.get('vcodec') in ('none', None):
+                    # Safely handle bitrate information
+                    abr = fmt.get('abr')
+                    tbr = fmt.get('tbr')
+                    
+                    # Convert None to 0 for safe comparison
+                    if abr is None:
+                        abr = 0
+                    if tbr is None:
+                        tbr = 0
+                        
+                    bitrate = abr or tbr
+                    
+                    # Only compare if we have valid numeric bitrates
+                    if isinstance(bitrate, (int, float)) and bitrate > best_bitrate:
                         best_bitrate = bitrate
                         best_format = fmt
 
-            format_info = ''
-            quality_info = ''
+            format_info = 'Unknown'
+            quality_info = 'Unknown'
             
             if best_format:
-                format_info = best_format.get('format_note', '') or best_format.get('format_id', '')
+                format_note = best_format.get('format_note')
+                format_id = best_format.get('format_id')
                 acodec = best_format.get('acodec', '')
-                bitrate = best_format.get('abr', 0) or best_format.get('tbr', 0)
                 
-                if bitrate:
+                # Handle potentially missing format information
+                if format_note:
+                    format_info = format_note
+                elif format_id:
+                    format_info = format_id
+                    
+                # Safely handle bitrate information
+                bitrate = best_format.get('abr') or best_format.get('tbr')
+                
+                if bitrate and isinstance(bitrate, (int, float)):
                     quality_info = f"{acodec} {bitrate}kbps"
                 else:
                     quality_info = acodec
+            
+            # Fallback for direct audio URL if format extraction fails
+            if not info.get('url'):
+                logging.warning(f"Could not extract direct URL for {url}")
+                info['url'] = url  # Use the original URL as fallback
             
             return {
                 'url': info['url'],
@@ -123,19 +191,24 @@ class MusicPlayer:
                 'thumbnail': info.get('thumbnail'),
                 'platform': platform,
                 'uploader': info.get('uploader', 'Unknown'),
-                'view_count': info.get('view_count', 0),
-                'like_count': info.get('like_count', 0),
-                'format': format_info or info.get('format', 'Unknown'),
-                'quality': quality_info or info.get('quality', 'Unknown'),
-                'is_live': is_live
+                'view_count': view_count,
+                'like_count': like_count,
+                'format': format_info,
+                'quality': quality_info,
+                'is_live': is_live,
+                'start_time': 0  # Add start_time for seeking
             }
         except Exception as e:
+            logging.error(f"Error extracting info from {url}: {str(e)}")
             raise Exception(f"Error extracting info: {str(e)}")
     
     async def create_stream_player(self, voice_client: discord.VoiceClient, track_data: dict, 
                                   ffmpeg_options: Optional[dict] = None) -> None:
         """Create and set up the audio player with appropriate options"""
         try:
+            # Store guild_id for after function
+            guild_id = voice_client.guild.id
+            
             # Get appropriate FFmpeg options if not provided
             if not ffmpeg_options:
                 if track_data['is_live']:
@@ -173,10 +246,23 @@ class MusicPlayer:
             # Create transformer for volume control
             transformed_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
             
+            # Update current track for the guild
+            self.current_track[guild_id] = track_data
+            
+            # Set up after function to call our callbacks
+            async def after_callback(error):
+                try:
+                    await self._call_after_functions(guild_id, error)
+                except Exception as e:
+                    logging.error(f"Error in voice after callback: {e}")
+            
             # Play the audio
             voice_client.play(
                 transformed_source,
-                after=lambda e: print(f'Player error: {e}') if e else None
+                after=lambda e: asyncio.run_coroutine_threadsafe(
+                    after_callback(e), 
+                    asyncio.get_event_loop()
+                )
             )
             
         except Exception as e:
@@ -251,6 +337,20 @@ class MusicPlayer:
         except Exception as e:
             print(f"Error updating progress: {e}")
             return
+            
+    def cleanup_for_guild(self, guild_id: int):
+        """Clean up resources for a guild"""
+        # Remove voice client
+        if guild_id in self.voice_clients:
+            self.voice_clients.pop(guild_id, None)
+        
+        # Remove track data
+        if guild_id in self.current_track:
+            self.current_track.pop(guild_id, None)
+        
+        # Remove playing message
+        if guild_id in self.playing_messages:
+            self.playing_messages.pop(guild_id, None)
 
 # Make sure to export the class at the end of the file
 __all__ = ['MusicPlayer']

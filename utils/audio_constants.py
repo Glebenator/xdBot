@@ -92,10 +92,10 @@ AUDIO_QUALITY_PRESETS = {
     'bass_boost': '-af "aresample=resampler=soxr,bass=g=5:f=110:w=0.6"',
 }
 
-# YT-DLP configuration optimized for high quality audio
+# YT-DLP configuration optimized for high quality audio with improved YouTube compatibility
 YTDLP_OPTIONS = {
-    # Audio format selection - prioritize high quality formats
-    'format': 'bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=mp3]/bestaudio',
+    # Audio format selection - prioritize high quality formats but be flexible
+    'format': 'bestaudio[acodec!=none]/bestaudio/best[acodec!=none]/best',
     'prefer_free_formats': True,
     
     # Audio quality preferences
@@ -138,10 +138,16 @@ YTDLP_OPTIONS = {
     'clean_infojson': False,
     'updatetime': False,
     
+    # YouTube-specific optimizations
+    'youtube_include_dash_manifest': False,  # Skip DASH manifests to improve speed
+    'extractor_retries': 3,                  # Retry extraction on failure
+    'fragment_retries': 10,                  # Increase fragment retry limit
+    'skip_unavailable_fragments': True,      # Skip unavailable fragments
+    'retry_sleep_functions': {'fragment': lambda n: 2.0 ** n},  # Exponential backoff
+    
     # Concurrent downloads for better performance
     'concurrent_fragment_downloads': 3,
 }
-
 # Make sure to export all constants
 __all__ = [
     'FFMPEG_OPTIONS', 

@@ -37,9 +37,31 @@ class MusicControlView(View):
         self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="⏸️", custom_id="pause", label="Pause"))
         self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="▶️", custom_id="resume", label="Resume"))
         self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="⏹️", custom_id="stop", label="Stop"))
+        
+        # Add queue controls
+        self.add_item(Button(style=discord.ButtonStyle.primary, emoji="⏮️", custom_id="queue_prev", label="Prev"))
+        self.add_item(Button(style=discord.ButtonStyle.primary, emoji="⏭️", custom_id="queue_next", label="Skip"))
+        
+        # Add seek controls only for non-live content
         if not is_live:
             self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="⏪", custom_id="rewind", label="-10s"))
             self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="⏩", custom_id="forward", label="+10s"))
+            
+        # Add loop button
+        self.add_item(Button(style=discord.ButtonStyle.primary, emoji="🔁", custom_id="queue_loop", label="Loop"))
+
+
+class QueueControlView(View):
+    """UI view specifically for queue management"""
+    def __init__(self):
+        super().__init__(timeout=None)  # Buttons won't timeout
+        
+        # Add queue control buttons
+        self.add_item(Button(style=discord.ButtonStyle.primary, emoji="⏮️", custom_id="queue_prev", label="Previous"))
+        self.add_item(Button(style=discord.ButtonStyle.primary, emoji="⏭️", custom_id="queue_next", label="Skip"))
+        self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="🔀", custom_id="queue_shuffle", label="Shuffle"))
+        self.add_item(Button(style=discord.ButtonStyle.secondary, emoji="🔁", custom_id="queue_loop", label="Loop"))
+        self.add_item(Button(style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="queue_clear", label="Clear"))
 
 
 class PlayerUIHelper:
@@ -58,6 +80,9 @@ class PlayerUIHelper:
     @staticmethod
     def format_time(seconds: float) -> str:
         """Format seconds into MM:SS or HH:MM:SS"""
+        if seconds is None:
+            return "LIVE"
+            
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         seconds = int(seconds % 60)
@@ -67,17 +92,28 @@ class PlayerUIHelper:
         return f"{minutes:02d}:{seconds:02d}"
 
     @staticmethod
-    async def send_temporary_response(interaction: discord.Interaction, content: str, delete_after: float = 5.0):
+    async def send_temporary_response(interaction: discord.Interaction, content: str, ephemeral: bool = True, delete_after: float = 5.0):
         """Send an ephemeral message that deletes itself after a specified time"""
-        await interaction.response.send_message(content, ephemeral=True)
-        if delete_after > 0:
-            import asyncio
-            await asyncio.sleep(delete_after)
-            try:
-                original_response = await interaction.original_response()
-                await original_response.delete()
-            except (discord.NotFound, discord.HTTPException):
-                pass
+        try:
+            await interaction.response.send_message(content, ephemeral=ephemeral)
+            if delete_after > 0 and not ephemeral:
+                import asyncio
+                await asyncio.sleep(delete_after)
+                try:
+                    original_response = await interaction.original_response()
+                    await original_response.delete()
+                except (discord.NotFound, discord.HTTPException):
+                    pass
+        except discord.errors.InteractionResponded:
+            # If interaction already responded, send followup instead
+            followup = await interaction.followup.send(content, ephemeral=ephemeral)
+            if delete_after > 0 and not ephemeral:
+                import asyncio
+                await asyncio.sleep(delete_after)
+                try:
+                    await followup.delete()
+                except (discord.NotFound, discord.HTTPException):
+                    pass
 
     @staticmethod
     async def send_chunked_message(ctx, content: str, reply_to=None) -> Optional[discord.Message]:

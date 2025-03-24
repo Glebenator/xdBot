@@ -64,6 +64,7 @@ async def load_extensions(bot):
         if extension_path:
             try:
                 await bot.load_extension(extension_path)
+                await bot.load_extension("cogs.voice")
                 print(f"✅ Loaded extension: {extension_path}")
                 loaded_cogs += 1
             except Exception as e:
