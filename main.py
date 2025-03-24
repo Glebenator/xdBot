@@ -43,33 +43,34 @@ async def load_extensions(bot):
     failed_cogs = 0
     
     # Walk through the cogs directory and load extensions
-    for item in os.listdir(cog_dir):
-        item_path = os.path.join(cog_dir, item)
+    for root, dirs, files in os.walk(cog_dir):
+        # Skip hidden directories and __pycache__
+        dirs[:] = [d for d in dirs if not d.startswith("__") and not d.startswith(".")]
         
-        # Skip hidden files/folders and __pycache__
-        if item.startswith("__") or item.startswith("."):
-            continue
-            
-        extension_path = None
+        # Get the package path
+        package_path = root.replace("/", ".").replace("\\", ".")
         
-        # Case 1: Item is a Python file
-        if os.path.isfile(item_path) and item.endswith('.py'):
-            extension_path = f"{cog_dir}.{item[:-3]}"  # Remove the .py extension
-            
-        # Case 2: Item is a directory with an __init__.py file (module)
-        elif os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "__init__.py")):
-            extension_path = f"{cog_dir}.{item}"
-        
-        # Load the extension if it's valid
-        if extension_path:
-            try:
-                await bot.load_extension(extension_path)
-                await bot.load_extension("cogs.voice")
-                print(f"✅ Loaded extension: {extension_path}")
-                loaded_cogs += 1
-            except Exception as e:
-                print(f"❌ Failed to load extension {extension_path}: {e}")
-                failed_cogs += 1
+        # Find Python files in this directory
+        for file in files:
+            if file.endswith('.py') and not file.startswith('__'):
+                extension_path = f"{package_path}.{file[:-3]}"  # Remove the .py extension
+                
+                try:
+                    await bot.load_extension(extension_path)
+                    print(f"✅ Loaded extension: {extension_path}")
+                    loaded_cogs += 1
+                except Exception as e:
+                    print(f"❌ Failed to load extension {extension_path}: {e}")
+                    failed_cogs += 1
+    
+    # Load the voice cog separately since it's a package
+    try:
+        await bot.load_extension("cogs.voice")
+        print(f"✅ Loaded extension: cogs.voice")
+        loaded_cogs += 1
+    except Exception as e:
+        print(f"❌ Failed to load extension cogs.voice: {e}")
+        failed_cogs += 1
     
     print(f"Extension loading complete. Loaded: {loaded_cogs}, Failed: {failed_cogs}")
 

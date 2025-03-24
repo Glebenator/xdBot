@@ -147,5 +147,60 @@ class Moderation(commands.Cog):
 
         await ctx.send(embed=embed, ephemeral=True)
 
+    @commands.hybrid_command(
+        name="clearchat",
+        description="Clear a specified number of recent messages in the channel"
+    )
+    @commands.has_permissions(manage_messages=True)
+    async def clear(self, ctx, amount: int = 5):
+        """
+        Clear a specified number of recent messages in the channel
+        
+        Parameters:
+        -----------
+        amount: int, optional
+            The number of messages to delete (default: 5, max: 100)
+        """
+        # Limit the amount to a reasonable number
+        if amount <= 0:
+            await ctx.send("Please specify a positive number of messages to clear.")
+            return
+        
+        if amount > 100:
+            await ctx.send("You can only delete up to 100 messages at once.")
+            amount = 100
+        
+        # Delete the command message and get a reference for the response
+        try:
+            await ctx.message.delete()
+        except discord.HTTPException:
+            # If we can't delete the command message (e.g., in a DM)
+            pass
+        
+        # Get messages to delete
+        try:
+            deleted = await ctx.channel.purge(limit=amount)
+            
+            # Send a simple confirmation message that disappears after 5 seconds
+            confirmation_message = await ctx.send(f"Successfully deleted {len(deleted)} message(s).")
+            
+            # Delete confirmation message after 5 seconds
+            await confirmation_message.delete(delay=5)
+            
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to delete messages.")
+        except discord.HTTPException as e:
+            await ctx.send(f"Error clearing messages: {str(e)}")
+    
+    @clear.error
+    async def clear_error(self, ctx, error):
+        """Error handler for the clear command"""
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("You don't have permission to use this command!")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("Please provide a valid number of messages to clear.")
+        else:
+            await ctx.send(f"An error occurred: {str(error)}")
+
 async def setup(bot):
     await bot.add_cog(Moderation(bot))
