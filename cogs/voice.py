@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from utils.helpers import create_embed
-from utils.audio_constants import FFMPEG_OPTIONS, STREAM_FFMPEG_OPTIONS
+from utils.audio_constants import FFMPEG_OPTIONS, STREAM_FFMPEG_OPTIONS, AUDIO_QUALITY_PRESETS
 from utils.player_ui import MusicControlView, EffectControlView, PlayerUIHelper
 from utils.audio_effects import AudioEffectManager, AUDIO_EFFECTS
 from utils.music_player import MusicPlayer
@@ -200,12 +200,33 @@ class Voice(commands.Cog):
                     
                     voice_client.stop()
                     
-                    await self.player.create_stream_player(
-                        voice_client, 
-                        track_data,
-                        {'before_options': f'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -ss {seek_time}',
-                         'options': '-vn -b:a 192k'}
-                    )
+                    # Consider current effect when seeking
+                    if interaction.guild_id in self.effect_manager.current_effect:
+                        effect_name = self.effect_manager.current_effect[interaction.guild_id]
+                        effect_options = self.effect_manager.get_effect_options(
+                            interaction.guild_id, 
+                            effect_name, 
+                            seek_time, 
+                            track_data['platform']
+                        )
+                        
+                        await self.player.create_stream_player(
+                            voice_client, 
+                            track_data,
+                            effect_options
+                        )
+                    else:
+                        # Use platform-optimized options
+                        ffmpeg_options = {
+                            'before_options': f'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -ss {seek_time}',
+                            'options': '-vn -b:a 256k -af "aresample=resampler=soxr:precision=28:dither_method=triangular_hp" -ac 2 -ar 48000'
+                        }
+                        
+                        await self.player.create_stream_player(
+                            voice_client, 
+                            track_data,
+                            ffmpeg_options
+                        )
                     
                     direction = "Forward" if custom_id == "forward" else "Backward"
                     await self.ui_helper.send_temporary_response(
@@ -239,7 +260,7 @@ class Voice(commands.Cog):
         else:
             await ctx.send("I'm not in a voice channel")
     
-    @commands.hybrid_command(name="play", description="Play audio from a URL")
+    @commands.hybrid_command(name="play", description="Play audio from a URL with high quality")
     async def play(self, ctx: commands.Context, *, url: str):
         """Play audio from URL with support for streams and regular content"""
         try:
@@ -313,8 +334,22 @@ class Voice(commands.Cog):
                         inline=False
                     )
 
-                if track_info.get('format'):
-                    embed.set_footer(text=f"Format: {track_info['format']} | Quality: {track_info['quality']}")
+                # Add format information
+                if track_info.get('format') or track_info.get('quality'):
+                    footer_text = ""
+                    if track_info.get('format'):
+                        footer_text += f"Format: {track_info['format']}"
+                    if track_info.get('quality'):
+                        if footer_text:
+                            footer_text += " | "
+                        footer_text += f"Quality: {track_info['quality']}"
+                        
+                    # Add audio preset info if set
+                    quality_preset = self.effect_manager.get_quality_preset(ctx.guild.id)
+                    if quality_preset:
+                        footer_text += f" | Audio preset: {quality_preset}"
+                        
+                    embed.set_footer(text=footer_text)
                 
                 if track_info.get('thumbnail'):
                     embed.set_thumbnail(url=track_info['thumbnail'])
@@ -344,15 +379,21 @@ class Voice(commands.Cog):
                 self.player.playing_messages[ctx.guild.id] = message
                 
                 # Get appropriate FFmpeg options
+                quality_preset = self.effect_manager.get_quality_preset(ctx.guild.id)
                 ffmpeg_options = self.effect_manager.get_ffmpeg_options(
                     track_info['is_live'], 
-                    track_info['platform']
+                    track_info['platform'],
+                    quality_preset
                 )
                 
                 # Apply current effect if any
                 if ctx.guild.id in self.effect_manager.current_effect:
                     effect_name = self.effect_manager.current_effect[ctx.guild.id]
-                    effect_options = self.effect_manager.get_effect_options(ctx.guild.id, effect_name)
+                    effect_options = self.effect_manager.get_effect_options(
+                        ctx.guild.id, 
+                        effect_name,
+                        platform=track_info['platform']
+                    )
                     ffmpeg_options.update(effect_options)
                 
                 await self.player.create_stream_player(
@@ -403,11 +444,12 @@ class Voice(commands.Cog):
         track_data = self.player.current_track[ctx.guild.id]
         current_position = track_data['start_time']
 
-        # Get effect options
+        # Get effect options with platform consideration
         effect_options = self.effect_manager.get_effect_options(
             ctx.guild.id, 
             effect_name, 
-            current_position
+            current_position,
+            track_data['platform']
         )
 
         # Apply the effect
@@ -449,6 +491,97 @@ class Voice(commands.Cog):
             view=EffectControlView(effect_name)
         )
         self.effect_manager.effect_messages[ctx.guild.id] = message
+
+    @commands.hybrid_command(name="effects", description="List all available audio effects")
+    async def list_effects(self, ctx: commands.Context):
+        """List all available audio effects"""
+        effects = self.effect_manager.get_available_effects()
+        
+        embed = create_embed(
+            title="Available Audio Effects",
+            description="Here are all the available audio effects:",
+            color=discord.Color.blue().value
+        )
+        
+        for name, description in effects.items():
+            embed.add_field(
+                name=name,
+                value=description,
+                inline=True
+            )
+            
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="audiopreset", description="Set the audio quality preset for playback")
+    async def set_audio_preset(self, ctx: commands.Context, preset_name: str):
+        """Set the audio quality preset for playback"""
+        presets = self.effect_manager.get_available_quality_presets()
+        
+        if preset_name not in presets:
+            preset_list = ', '.join(f'`{preset}`' for preset in presets.keys())
+            await ctx.send(f"Invalid preset! Available presets: {preset_list}")
+            return
+            
+        self.effect_manager.set_quality_preset(ctx.guild.id, preset_name)
+        
+        # If currently playing, apply the preset
+        voice_client = self.player.get_voice_client(ctx)
+        if voice_client and voice_client.is_playing() and ctx.guild.id in self.player.current_track:
+            track_data = self.player.current_track[ctx.guild.id]
+            voice_client.stop()
+            
+            # Get appropriate FFmpeg options with the new preset
+            ffmpeg_options = self.effect_manager.get_ffmpeg_options(
+                track_data['is_live'], 
+                track_data['platform'],
+                preset_name
+            )
+            
+            # Apply current effect if any
+            if ctx.guild.id in self.effect_manager.current_effect:
+                effect_name = self.effect_manager.current_effect[ctx.guild.id]
+                effect_options = self.effect_manager.get_effect_options(
+                    ctx.guild.id, 
+                    effect_name,
+                    track_data['start_time'],
+                    track_data['platform']
+                )
+                ffmpeg_options.update(effect_options)
+            
+            await self.player.create_stream_player(
+                voice_client, 
+                track_data,
+                ffmpeg_options
+            )
+            
+            await ctx.send(f"Applied audio preset: `{preset_name}` to current playback")
+        else:
+            await ctx.send(f"Set audio preset to: `{preset_name}`. Will apply to next playback.")
+
+    @commands.hybrid_command(name="audiopresets", description="List all available audio quality presets")
+    async def list_audio_presets(self, ctx: commands.Context):
+        """List all available audio quality presets"""
+        presets = self.effect_manager.get_available_quality_presets()
+        
+        embed = create_embed(
+            title="Available Audio Quality Presets",
+            description="Here are all the available audio quality presets:",
+            color=discord.Color.blue().value
+        )
+        
+        for name, description in presets.items():
+            embed.add_field(
+                name=name,
+                value=description,
+                inline=False
+            )
+            
+        # Show current preset if set
+        current_preset = self.effect_manager.get_quality_preset(ctx.guild.id)
+        if current_preset:
+            embed.set_footer(text=f"Current preset: {current_preset}")
+            
+        await ctx.send(embed=embed)
     
     @commands.hybrid_command(name="seek", description="Skip to a specific position in seconds")
     async def seek(self, ctx: commands.Context, seconds: int):
@@ -486,7 +619,8 @@ class Voice(commands.Cog):
                 effect_options = self.effect_manager.get_effect_options(
                     ctx.guild.id, 
                     effect_name, 
-                    seek_time
+                    seek_time,
+                    track_data['platform']
                 )
                 
                 audio_source = discord.FFmpegPCMAudio(
@@ -494,15 +628,20 @@ class Voice(commands.Cog):
                     **effect_options
                 )
             else:
-                # Default options with seek
-                seek_options = {
-                    'before_options': f'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -ss {seek_time}',
-                    'options': '-vn -b:a 192k'
-                }
+                # Get appropriate FFmpeg options with the current preset
+                quality_preset = self.effect_manager.get_quality_preset(ctx.guild.id)
+                ffmpeg_options = self.effect_manager.get_ffmpeg_options(
+                    track_data['is_live'], 
+                    track_data['platform'],
+                    quality_preset
+                )
+                
+                # Add seek position
+                ffmpeg_options['before_options'] += f' -ss {seek_time}'
                 
                 audio_source = discord.FFmpegPCMAudio(
                     track_data['url'],
-                    **seek_options
+                    **ffmpeg_options
                 )
             
             voice_client.play(

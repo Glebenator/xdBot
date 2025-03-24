@@ -4,7 +4,13 @@ import yt_dlp
 import asyncio
 from typing import Dict, Optional, Any, List, Tuple
 import logging
-from utils.audio_constants import FFMPEG_OPTIONS, STREAM_FFMPEG_OPTIONS, YTDLP_OPTIONS
+from utils.audio_constants import (
+    FFMPEG_OPTIONS, 
+    STREAM_FFMPEG_OPTIONS, 
+    PLATFORM_OPTIMIZATIONS,
+    YTDLP_OPTIONS
+)
+
 
 class MusicPlayer:
     """Handles music extraction and playback"""
@@ -66,18 +72,13 @@ class MusicPlayer:
             platform = self.get_platform_name(url)
             options = YTDLP_OPTIONS.copy()
 
-            if platform == 'Twitch':
-                # Apply Twitch-specific optimizations
-                options.update({
-                    'format': 'audio_only/audio/best',
-                    'live_from_start': False,
-                })
-            elif platform == 'SoundCloud':
-                # Apply SoundCloud-specific optimizations
-                options.update({
-                    'format': 'bestaudio/best',
-                    'preference_format': 'm4a',
-                })
+            # Apply platform-specific optimizations
+            if platform in PLATFORM_OPTIMIZATIONS:
+                platform_opts = PLATFORM_OPTIMIZATIONS[platform]
+                if 'format' in platform_opts:
+                    options['format'] = platform_opts['format']
+                if 'quality' in platform_opts:
+                    options['quality'] = platform_opts['quality']
 
             self.ytdlp = yt_dlp.YoutubeDL(options)
             info = self.ytdlp.extract_info(url, download=False)
@@ -89,6 +90,32 @@ class MusicPlayer:
             is_live = info.get('is_live', False)
             duration = None if is_live else info.get('duration', 0)
 
+            # Extract format information
+            formats = info.get('formats', [])
+            best_format = None
+            best_bitrate = 0
+            
+            for fmt in formats:
+                # Look for audio-only formats with the highest bitrate
+                if fmt.get('acodec') != 'none' and fmt.get('vcodec') in ('none', None):
+                    bitrate = fmt.get('abr', 0) or fmt.get('tbr', 0)
+                    if bitrate > best_bitrate:
+                        best_bitrate = bitrate
+                        best_format = fmt
+
+            format_info = ''
+            quality_info = ''
+            
+            if best_format:
+                format_info = best_format.get('format_note', '') or best_format.get('format_id', '')
+                acodec = best_format.get('acodec', '')
+                bitrate = best_format.get('abr', 0) or best_format.get('tbr', 0)
+                
+                if bitrate:
+                    quality_info = f"{acodec} {bitrate}kbps"
+                else:
+                    quality_info = acodec
+            
             return {
                 'url': info['url'],
                 'title': info['title'],
@@ -98,8 +125,8 @@ class MusicPlayer:
                 'uploader': info.get('uploader', 'Unknown'),
                 'view_count': info.get('view_count', 0),
                 'like_count': info.get('like_count', 0),
-                'format': info.get('format', 'Unknown'),
-                'quality': info.get('quality', 'Unknown'),
+                'format': format_info or info.get('format', 'Unknown'),
+                'quality': quality_info or info.get('quality', 'Unknown'),
                 'is_live': is_live
             }
         except Exception as e:
@@ -116,12 +143,17 @@ class MusicPlayer:
                     if track_data['platform'] == 'Twitch':
                         # Additional Twitch-specific options
                         ffmpeg_options['before_options'] += ' -timeout 10000000'
-                        ffmpeg_options['options'] = (
-                            '-vn -b:a 160k -live_start_index -1 -fflags nobuffer '
-                            '-flags low_delay -strict experimental -avioflags direct'
-                        )
+                        if 'Twitch' in PLATFORM_OPTIMIZATIONS:
+                            twitch_opts = PLATFORM_OPTIMIZATIONS['Twitch']
+                            if 'audio_options' in twitch_opts:
+                                ffmpeg_options['options'] = twitch_opts['audio_options']
                 else:
                     ffmpeg_options = FFMPEG_OPTIONS.copy()
+                    # Apply platform-specific optimizations
+                    if track_data['platform'] in PLATFORM_OPTIMIZATIONS:
+                        platform_opts = PLATFORM_OPTIMIZATIONS[track_data['platform']]
+                        if 'audio_options' in platform_opts:
+                            ffmpeg_options['options'] = platform_opts['audio_options']
 
             # For livestreams, we might need to refresh the URL
             if track_data['is_live']:
@@ -219,3 +251,6 @@ class MusicPlayer:
         except Exception as e:
             print(f"Error updating progress: {e}")
             return
+
+# Make sure to export the class at the end of the file
+__all__ = ['MusicPlayer']
