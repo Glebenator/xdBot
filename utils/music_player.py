@@ -205,15 +205,26 @@ class MusicPlayer:
     async def create_stream_player(self, voice_client: discord.VoiceClient, track_data: dict, 
                                   ffmpeg_options: Optional[dict] = None) -> None:
         """Create and set up the audio player with appropriate options"""
+        if not voice_client or not voice_client.is_connected():
+            logging.error("Voice client is not connected, cannot create stream player")
+            return
+            
         try:
             # Store guild_id for after function
             guild_id = voice_client.guild.id
             
+            logging.info(f"[Guild {guild_id}] Creating stream player for: {track_data.get('title', 'Unknown')}")
+            
             # Get appropriate FFmpeg options if not provided
             if not ffmpeg_options:
-                if track_data['is_live']:
+                if track_data.get('is_live', False):
                     ffmpeg_options = STREAM_FFMPEG_OPTIONS.copy()
-                    if track_data['platform'] == 'Twitch':
+                    
+                    # Special handling for different platforms
+                    platform = track_data.get('platform', 'Unknown')
+                    logging.info(f"[Guild {guild_id}] Stream platform: {platform}")
+                    
+                    if platform == 'Twitch':
                         # Additional Twitch-specific options
                         ffmpeg_options['before_options'] += ' -timeout 10000000'
                         if 'Twitch' in PLATFORM_OPTIMIZATIONS:
@@ -223,50 +234,98 @@ class MusicPlayer:
                 else:
                     ffmpeg_options = FFMPEG_OPTIONS.copy()
                     # Apply platform-specific optimizations
-                    if track_data['platform'] in PLATFORM_OPTIMIZATIONS:
-                        platform_opts = PLATFORM_OPTIMIZATIONS[track_data['platform']]
+                    platform = track_data.get('platform', 'Unknown')
+                    logging.info(f"[Guild {guild_id}] Content platform: {platform}")
+                    
+                    if platform in PLATFORM_OPTIMIZATIONS:
+                        platform_opts = PLATFORM_OPTIMIZATIONS[platform]
                         if 'audio_options' in platform_opts:
                             ffmpeg_options['options'] = platform_opts['audio_options']
 
             # For livestreams, we might need to refresh the URL
-            if track_data['is_live']:
+            if track_data.get('is_live', False):
                 try:
+                    logging.info(f"[Guild {guild_id}] Refreshing stream URL")
                     info = self.ytdlp.extract_info(track_data['url'], download=False)
-                    if 'url' in info:
+                    if info and 'url' in info:
                         track_data['url'] = info['url']
+                        logging.info(f"[Guild {guild_id}] Stream URL refreshed successfully")
                 except Exception as e:
-                    print(f"Error refreshing stream URL: {e}")
+                    logging.error(f"Error refreshing stream URL: {e}")
 
             # Create audio source
-            audio_source = discord.FFmpegPCMAudio(
-                track_data['url'],
-                **ffmpeg_options
-            )
-            
-            # Create transformer for volume control
-            transformed_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
-            
-            # Update current track for the guild
-            self.current_track[guild_id] = track_data
-            
-            # Set up after function to call our callbacks
-            async def after_callback(error):
-                try:
-                    await self._call_after_functions(guild_id, error)
-                except Exception as e:
-                    logging.error(f"Error in voice after callback: {e}")
-            
-            # Play the audio
-            voice_client.play(
-                transformed_source,
-                after=lambda e: asyncio.run_coroutine_threadsafe(
-                    after_callback(e), 
-                    asyncio.get_event_loop()
+            try:
+                audio_source = discord.FFmpegPCMAudio(
+                    track_data['url'],
+                    **ffmpeg_options
                 )
-            )
-            
+                
+                # Create transformer for volume control
+                transformed_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
+                
+                # Update current track for the guild
+                self.current_track[guild_id] = track_data
+                
+                # Define after callback within a function to ensure it's properly scoped
+                def create_after_function():
+                    async def after_callback(error):
+                        if error:
+                            logging.error(f"[Guild {guild_id}] Player error: {error}")
+                        
+                        logging.info(f"[Guild {guild_id}] Track ended, calling after functions")
+                        try:
+                            await self._call_after_functions(guild_id, error)
+                        except Exception as e:
+                            logging.error(f"Error in voice after callback: {e}")
+                    
+                    return lambda e: asyncio.run_coroutine_threadsafe(
+                        after_callback(e), 
+                        asyncio.get_event_loop()
+                    )
+                
+                # Play the audio with properly scoped after function
+                voice_client.play(
+                    transformed_source,
+                    after=create_after_function()
+                )
+                
+                logging.info(f"[Guild {guild_id}] Started playback successfully")
+                
+            except Exception as source_error:
+                logging.error(f"Error creating audio source: {source_error}")
+                
+                # Try with simpler options as a fallback
+                try:
+                    logging.info(f"[Guild {guild_id}] Trying fallback options")
+                    simple_options = {
+                        'before_options': '-reconnect 1 -reconnect_streamed 1',
+                        'options': '-vn'
+                    }
+                    
+                    audio_source = discord.FFmpegPCMAudio(
+                        track_data['url'],
+                        **simple_options
+                    )
+                    
+                    transformed_source = discord.PCMVolumeTransformer(audio_source, volume=1.0)
+                    self.current_track[guild_id] = track_data
+                    
+                    voice_client.play(
+                        transformed_source,
+                        after=lambda e: asyncio.run_coroutine_threadsafe(
+                            self._call_after_functions(guild_id, e), 
+                            asyncio.get_event_loop()
+                        )
+                    )
+                    
+                    logging.info(f"[Guild {guild_id}] Fallback playback successful")
+                    
+                except Exception as fallback_error:
+                    logging.error(f"Fallback playback also failed: {fallback_error}")
+                    raise fallback_error
+                
         except Exception as e:
-            print(f"Error creating stream player: {e}")
+            logging.error(f"Error creating stream player: {e}")
             raise e
     
     async def handle_stream_command(self, voice_client: discord.VoiceClient, 
@@ -289,7 +348,7 @@ class MusicPlayer:
                 return True
             return False
         except Exception as e:
-            print(f"Error handling stream command: {e}")
+            logging.error(f"Error handling stream command: {e}")
             return False
     
     async def start_progress_updates(self, message: discord.Message, track_data: dict, ui_helper):
@@ -304,7 +363,7 @@ class MusicPlayer:
                 track_data['start_time'] += 1
                 await asyncio.sleep(1)
         except Exception as e:
-            print(f"Error in progress updates: {e}")
+            logging.error(f"Error in progress updates: {e}")
             return
     
     async def update_playing_message(self, message: discord.Message, track_data: dict, ui_helper):
@@ -335,7 +394,7 @@ class MusicPlayer:
             # Message was deleted
             return
         except Exception as e:
-            print(f"Error updating progress: {e}")
+            logging.error(f"Error updating progress: {e}")
             return
             
     def cleanup_for_guild(self, guild_id: int):

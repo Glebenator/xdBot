@@ -168,13 +168,52 @@ class MusicQueue(BaseVoiceCog):
         
         # Check if there's a next track
         next_track = self.queue_manager.get_next_track(guild_id)
-        if next_track:
-            # Stop current track (which will trigger the after function to play next)
-            voice_client.stop()
-            await ctx.send(f"Skipping to next track: {next_track['title']}")
-        else:
+        
+        if not next_track:
+            # No more tracks
             voice_client.stop()
             await ctx.send("No more tracks in queue!")
+            return
+            
+        # In case the auto-transition doesn't work, we'll immediately play the next track
+        # This is more reliable than depending on the after callback
+        try:
+            # Stop the current track
+            voice_client.stop()
+            
+            # Get appropriate FFmpeg options
+            quality_preset = self.effect_manager.get_quality_preset(guild_id)
+            ffmpeg_options = self.effect_manager.get_ffmpeg_options(
+                next_track.get('is_live', False), 
+                next_track.get('platform', 'Unknown'),
+                quality_preset
+            )
+            
+            # Apply current effect if any
+            if guild_id in self.effect_manager.current_effect:
+                effect_name = self.effect_manager.current_effect[guild_id]
+                effect_options = self.effect_manager.get_effect_options(
+                    guild_id, 
+                    effect_name,
+                    platform=next_track.get('platform', 'Unknown')
+                )
+                ffmpeg_options.update(effect_options)
+            
+            # Play the next track directly
+            await self.player.create_stream_player(
+                voice_client, 
+                next_track,
+                ffmpeg_options
+            )
+            
+            # Update the now playing message
+            await self.update_playing_message(guild_id, next_track)
+            
+            await ctx.send(f"Skipping to next track: {next_track['title']}")
+            
+        except Exception as e:
+            logging.error(f"Error skipping to next track: {e}")
+            await ctx.send(f"Error skipping: {str(e)}")
     
     @commands.hybrid_command(name="prev", description="Play the previous track in the queue")
     async def previous_track(self, ctx: commands.Context):

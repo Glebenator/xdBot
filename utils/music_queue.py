@@ -34,6 +34,8 @@ class QueueManager:
         self.loop_mode: Dict[int, int] = {}
         # Maps guild_id -> True if currently auto-playing next track
         self._auto_playing: Dict[int, bool] = {}
+        # Locks for preventing race conditions
+        self._locks = {}
     
     def register_track_start_callback(self, callback: Callable) -> None:
         """Register a callback function to be called when a track starts playing"""
@@ -239,6 +241,8 @@ class QueueManager:
         current_idx = self.current_index.get(guild_id, 0)
         loop_mode = self.loop_mode.get(guild_id, 0)
         
+        logging.info(f"[Guild {guild_id}] Getting next track: current_idx={current_idx}, loop_mode={loop_mode}, queue_length={len(queue)}")
+        
         # Handle loop modes
         if loop_mode == 1:  # Loop single track
             if 0 <= current_idx < len(queue):
@@ -372,34 +376,58 @@ class QueueManager:
         self._auto_playing[guild_id] = value
     
     async def handle_track_finished(self, guild_id: int, voice_client: discord.VoiceClient, 
-                                  player, track_data: Dict[str, Any]) -> None:
+                                  player, error: Optional[Exception] = None) -> None:
         """
         Handle when a track finishes playing
         
         This method decides what to do next (play next track or start inactivity timer)
         """
+        if not voice_client or not voice_client.is_connected():
+            logging.warning(f"Voice client disconnected for guild {guild_id}, cannot handle track finished")
+            return
+            
+        # Get the current track data before we change indexes
+        track_data = self.get_current_track(guild_id)
+        
         # Notify that the track has ended
         if track_data:
-            await self._notify_track_end(guild_id, track_data)
+            try:
+                await self._notify_track_end(guild_id, track_data)
+            except Exception as e:
+                logging.error(f"Error notifying track end: {e}")
         
-        # Check if another track is already auto-playing (to prevent multiple calls)
-        if self.is_auto_playing(guild_id):
-            return
-        
-        # Mark that we're handling auto-play
-        self.set_auto_playing(guild_id, True)
-        
-        try:
-            # Get the next track to play
-            next_track = self.get_next_track(guild_id)
+        # Use a semaphore to prevent race conditions
+        # This is acquired when we start processing the end of a track
+        # and released when we're done
+        guild_key = f"auto_play_lock_{guild_id}"
+        if guild_key not in self._locks:
+            self._locks[guild_key] = asyncio.Semaphore(1)
             
-            if next_track:
-                # Play the next track
-                await player.create_stream_player(voice_client, next_track)
-                await self._notify_track_start(guild_id, next_track)
-            else:
-                # No more tracks, start inactivity timer
-                await self.start_inactivity_timer(guild_id, voice_client)
-        finally:
-            # Mark that we're done handling auto-play
-            self.set_auto_playing(guild_id, False)
+        # Check if we're already processing this guild
+        if not self._locks[guild_key].locked():
+            async with self._locks[guild_key]:
+                logging.info(f"[Guild {guild_id}] Track finished, handling next track")
+                # Get the next track to play
+                next_track = self.get_next_track(guild_id)
+                
+                if next_track:
+                    try:
+                        logging.info(f"[Guild {guild_id}] Playing next track: {next_track.get('title', 'Unknown')}")
+                        await player.create_stream_player(voice_client, next_track)
+                        await self._notify_track_start(guild_id, next_track)
+                    except Exception as e:
+                        logging.error(f"Error playing next track: {e}")
+                        # Try one more time with a fresh source
+                        try:
+                            logging.info(f"[Guild {guild_id}] Retrying with fresh source")
+                            refreshed_track = player.get_track_info(next_track.get('url', ''))
+                            await player.create_stream_player(voice_client, refreshed_track)
+                            await self._notify_track_start(guild_id, refreshed_track)
+                        except Exception as retry_error:
+                            logging.error(f"Error on retry: {retry_error}")
+                            await self.start_inactivity_timer(guild_id, voice_client)
+                else:
+                    logging.info(f"[Guild {guild_id}] No more tracks in queue, starting inactivity timer")
+                    await self.start_inactivity_timer(guild_id, voice_client)
+        else:
+            logging.warning(f"[Guild {guild_id}] Track finished handler already running, skipping")

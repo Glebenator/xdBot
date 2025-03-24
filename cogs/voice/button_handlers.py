@@ -5,6 +5,7 @@ Handlers for button interactions in voice cogs.
 import discord
 import logging
 from typing import Optional, Dict, Any
+from discord.ext import commands
 
 from .base_cog import get_player, get_queue_manager, get_effect_manager, get_ui_helper
 from utils.helpers import create_embed
@@ -128,39 +129,66 @@ class QueueButtonHandler:
             await ui_helper.send_temporary_response(interaction, "Not connected to a voice channel!")
             return
             
+        # Find a reference to the queue cog to call its methods directly
+        queue_cog = None
+        for cog in bot.cogs.values():
+            if isinstance(cog, commands.Cog) and cog.__class__.__name__ == "MusicQueue":
+                queue_cog = cog
+                break
+                
         if custom_id == "queue_prev":
             # Play previous track
-            prev_track = queue_manager.get_previous_track(guild_id)
-            if not prev_track:
+            if queue_cog:
+                # Use the queue cog's method to handle previous track logic
+                ctx = await bot.get_context(interaction.message)
+                await queue_cog.previous_track(ctx)
                 await ui_helper.send_temporary_response(
-                    interaction, 
-                    "No previous track available!", 
+                    interaction,
+                    "Playing previous track", 
                     ephemeral=True
                 )
-                return
-            
-            # Stop current playback
-            voice_client.stop()
-            
-            # Play the previous track
-            await player.create_stream_player(voice_client, prev_track)
-            
-            await ui_helper.send_temporary_response(
-                interaction,
-                f"Playing previous track: {prev_track['title']}", 
-                ephemeral=True
-            )
+            else:
+                # Fallback implementation if cog not found
+                prev_track = queue_manager.get_previous_track(guild_id)
+                if not prev_track:
+                    await ui_helper.send_temporary_response(
+                        interaction, 
+                        "No previous track available!", 
+                        ephemeral=True
+                    )
+                    return
+                
+                # Stop current playback
+                voice_client.stop()
+                
+                # Play the previous track
+                await player.create_stream_player(voice_client, prev_track)
+                
+                await ui_helper.send_temporary_response(
+                    interaction,
+                    f"Playing previous track: {prev_track['title']}", 
+                    ephemeral=True
+                )
             
         elif custom_id == "queue_next":
             # Skip to next track
-            # Stop current playback (after handler will take care of playing next)
-            voice_client.stop()
-            
-            await ui_helper.send_temporary_response(
-                interaction,
-                "Skipping to next track", 
-                ephemeral=True
-            )
+            if queue_cog:
+                # Use the queue cog's skip method directly
+                ctx = await bot.get_context(interaction.message)
+                await queue_cog.skip(ctx)
+                await ui_helper.send_temporary_response(
+                    interaction,
+                    "Skipping to next track", 
+                    ephemeral=True
+                )
+            else:
+                # Fallback implementation
+                voice_client.stop()
+                await ui_helper.send_temporary_response(
+                    interaction,
+                    "Skipping to next track", 
+                    ephemeral=True
+                )
             
         elif custom_id == "queue_shuffle":
             # Shuffle the queue
@@ -171,6 +199,14 @@ class QueueButtonHandler:
                     "Queue shuffled!", 
                     ephemeral=True
                 )
+                
+                # Update the now playing message
+                for cog in bot.cogs.values():
+                    if hasattr(cog, 'update_playing_message'):
+                        current_track = queue_manager.get_current_track(guild_id)
+                        if current_track:
+                            await cog.update_playing_message(guild_id, current_track)
+                        break
             else:
                 await ui_helper.send_temporary_response(
                     interaction,
@@ -244,6 +280,13 @@ class PlaybackButtonHandler:
             await ui_helper.send_temporary_response(interaction, "No track data available!")
             return
             
+        # Find a reference to the queue cog to call its methods directly
+        queue_cog = None
+        for cog in bot.cogs.values():
+            if isinstance(cog, commands.Cog) and cog.__class__.__name__ == "MusicQueue":
+                queue_cog = cog
+                break
+        
         try:
             if track_data.get('is_live'):
                 # Handle livestream controls
@@ -362,6 +405,7 @@ class PlaybackButtonHandler:
                         f"{direction} 10s ({'%.1f' % seek_time}s / {track_data['duration']}s)"
                     )
         except Exception as e:
+            logging.error(f"Error handling button click: {str(e)}")
             await ui_helper.send_temporary_response(
                 interaction,
                 f"Error handling button click: {str(e)}",

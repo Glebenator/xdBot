@@ -171,8 +171,9 @@ class BaseVoiceCog(commands.Cog):
             if track_data.get('thumbnail'):
                 embed.set_thumbnail(url=track_data['thumbnail'])
             
-            # Get appropriate view
-            view = self.ui_helper.create_music_control_view(track_data['is_live'])
+            # Create view with appropriate controls
+            from utils.player_ui import MusicControlView
+            view = MusicControlView(is_live=track_data['is_live'])
             
             # Update the message with the new embed and view
             await message.edit(embed=embed, view=view)
