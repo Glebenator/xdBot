@@ -43,3 +43,5 @@ FFMPEG_OPTIONS = {
 # Player settings
 PLAYER_TIMEOUT = 180  # Seconds to wait for a new song before disconnecting
 PLAYER_IDLE_TIMEOUT = 120  # Seconds to wait when alone in voice channel before disconnecting
+MUSIC_INACTIVITY_TIMEOUT = 120
+ALONE_TIMEOUT = 60

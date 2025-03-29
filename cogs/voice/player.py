@@ -1,354 +1,468 @@
 # cogs/voice/player.py
 import discord
 import asyncio
-from async_timeout import timeout
+# Removed: from async_timeout import timeout # No longer needed for inactivity
 import logging
 import time
-import random # Added
+import random
 from .track import Track
 from .utils.ytdl import YTDLSource
-from .utils.config import PLAYER_TIMEOUT, PLAYER_IDLE_TIMEOUT # Assuming these exist
-from .ui import PlayerControls # Added
+# Removed: from .utils.config import MUSIC_INACTIVITY_TIMEOUT # No longer needed here
+from .ui import PlayerControls
 
 logger = logging.getLogger(__name__)
 
 class MusicPlayer:
-    """Manages the music queue and playback for a guild."""
-
     def __init__(self, ctx):
         self.bot = ctx.bot
         self._guild = ctx.guild
-        self._channel = ctx.channel # Text channel context
-        self._cog = ctx.cog # Reference to the Voice cog
-
+        self._channel = ctx.channel # Text channel where commands are initiated / NP messages go
+        self._cog = ctx.cog
         self.queue = asyncio.Queue()
         self.next = asyncio.Event()
-
-        self.current = None # The currently playing Track object
-        self.loop_mode = 'off'  # 'off', 'song', 'queue'
+        self.current = None
+        self.loop_mode = 'off'
         self.skip_votes = set()
-
-        # --- New/Modified Attributes ---
-        self.volume = 0.5 # Keeping volume attribute even if command isn't added yet
-        self.playback_start_time = None # Actual time.time() when playback started
-        self.seek_offset = 0 # How many seconds into the track we started (due to seeking)
-        self.now_playing_message = None # Message object holding the controls view
+        self.volume = 0.5
+        self.playback_start_time = None
+        self.seek_offset = 0
+        self.now_playing_message = None
         self._player_task = self.bot.loop.create_task(self.player_loop())
         self._destroyed = False
 
-
     async def add_track(self, track: Track) -> int:
-        """Add a track to the queue. Returns new queue size."""
         await self.queue.put(track)
         return self.queue.qsize()
 
     async def get_tracks(self, limit=None) -> list[Track]:
-        """Get tracks currently in the queue."""
         tracks = list(self.queue._queue)
         return tracks[:limit] if limit else tracks
 
     def clear_queue(self):
-        """Clear the music queue."""
-        # self.queue = asyncio.Queue() # Re-create queue or clear internal deque
-        while not self.queue.empty():
-             try:
-                 self.queue.get_nowait()
-                 self.queue.task_done()
-             except asyncio.QueueEmpty:
-                 break
-             except Exception as e:
-                 logger.error(f"Error clearing item from queue: {e}")
+        # Efficiently clear the queue
+        self.queue = asyncio.Queue()
+        # If you need to do something with the old items (e.g., logging), iterate:
+        # while not self.queue.empty():
+        #     try:
+        #         self.queue.get_nowait()
+        #         self.queue.task_done() # Though task_done isn't strictly needed if replacing queue
+        #     except asyncio.QueueEmpty:
+        #         break
+        #     except Exception as e:
+        #         logger.error(f"Error clearing item from queue: {e}")
+
 
     def remove_track(self, index: int) -> Track | None:
-        """Remove a track at the specified index (0-based)."""
         if 0 <= index < self.queue.qsize():
             temp_list = list(self.queue._queue)
             removed_track = temp_list.pop(index)
-            self.clear_queue() # Clear internal deque first
-            for track in temp_list: # Put remaining back
-                self.queue._queue.append(track)
+            # Rebuild the queue
+            new_queue = asyncio.Queue()
+            for track in temp_list:
+                new_queue.put_nowait(track)
+            self.queue = new_queue
             return removed_track
         return None
 
     def shuffle_queue(self) -> bool:
-        """Shuffles the tracks currently in the queue. Returns True if shuffled."""
         if self.queue.qsize() > 1:
             random.shuffle(self.queue._queue)
             return True
         return False
 
-    def get_progress(self) -> tuple[int, int]:
-        """Returns (current_position, total_duration) in seconds."""
-        if not self.current or not self.playback_start_time or not self.current.duration_seconds:
-            return 0, 0 # Includes LIVE streams (duration_seconds is None)
+    def get_progress(self) -> tuple[int | float, int | float]:
+        if not all([self.current, self._guild.voice_client, self.playback_start_time]):
+             return 0, (self.current.duration_seconds if self.current else 0)
 
-        total_seconds = self.current.duration_seconds
+        # If it's a stream or live, duration might be None or 0
+        total_seconds = self.current.duration_seconds or 0
+
+        # Get current position from FFmpeg (more accurate than time.time)
+        # Note: discord.py's VoiceClient doesn't directly expose FFmpeg's time.
+        # We still rely on time.time() unless we implement lower-level FFmpeg interaction.
         elapsed_since_start = time.time() - self.playback_start_time
-        current_position = int(elapsed_since_start + self.seek_offset)
+        current_position = elapsed_since_start + self.seek_offset
 
-        return min(current_position, total_seconds), total_seconds
+        # Clamp position to duration if duration is known
+        if total_seconds > 0:
+            return min(current_position, total_seconds), total_seconds
+        else:
+            # For streams/live, return elapsed time and 0 duration (or keep track duration if it was 'LIVE')
+             return current_position, (0 if self.current.duration != "LIVE" else "LIVE")
+
 
     async def seek(self, seconds: int) -> bool:
-        """Seeks the current track to the specified time in seconds."""
         if not self.current or not self._guild.voice_client or self.current.duration == "LIVE":
-            return False # Cannot seek if not playing or live
+            logger.warning("Seek attempt failed: No current track, VC, or track is LIVE.")
+            return False
+        if not self.current.duration_seconds or seconds >= self.current.duration_seconds or seconds < 0:
+             logger.warning(f"Seek attempt failed: Invalid seek time {seconds}s for track duration {self.current.duration_seconds}s.")
+             return False
 
-        original_track_data = self.current.data # Keep original YTDL data
+        # Stop current playback
+        vc = self._guild.voice_client
+        vc.stop() # This should trigger the 'after' callback and next.set()
+
+        # Re-create source with seek options
+        # NOTE: This approach relies on re-downloading/streaming from the new position.
+        # It might be slightly delayed depending on network/source.
+        # True FFmpeg seeking requires different interaction.
         original_requester = self.current.requester
+        original_url = self.current.url # Use URL as it's more reliable than hoping data persists
 
         try:
-            # Stop current playback cleanly
-            self._guild.voice_client.stop()
-
-            # Recreate the source with the seek parameter
-            # Use the original webpage_url to avoid issues with expired stream URLs
+            logger.info(f"Seeking '{self.current.title}' to {seconds} seconds...")
             source_info = await YTDLSource.create_source(
-                original_track_data['webpage_url'],
+                original_url,
                 loop=self.bot.loop,
-                stream=True, # Always stream for seeking
+                stream=True,
                 requester=original_requester,
-                seek_seconds=seconds
+                seek_seconds=seconds # Pass seek time to YTDLSource if it supports it (e.g., via ffmpeg options)
             )
-
-            # Create a new Track object with the seeked source
-            # (Overwrites self.current but keeps original metadata conceptually)
+            # Update the current track reference ONLY if source creation succeeds
             self.current = Track(source_info, original_requester)
-
-            # Apply volume transform
-            source_with_volume = discord.PCMVolumeTransformer(self.current.source, volume=self.volume)
+            source_with_volume = discord.PCMVolumeTransformer(
+                self.current.source,
+                volume=self.volume
+            )
 
             # Play the new source
-            self._guild.voice_client.play(
+            vc.play(
                 source_with_volume,
-                after=lambda _: self.bot.loop.call_soon_threadsafe(self.next.set)
+                after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set) if not e else self._handle_play_error(e)
             )
 
-            # Update playback time tracking
+            # Update timing info
             self.playback_start_time = time.time()
-            self.seek_offset = seconds
+            self.seek_offset = seconds # Store the target seek time
 
-            # Update the Now Playing message if it exists
-            await self.update_now_playing_message()
-
+            await self.update_now_playing_message() # Update display immediately
+            logger.info(f"Seek successful for '{self.current.title}'.")
             return True
 
         except Exception as e:
-            logger.error(f"Error during seek for track {self.current.title}: {e}")
-            # Attempt to recover by moving to the next track or stopping
-            self.bot.loop.call_soon_threadsafe(self.next.set) # Signal loop to potentially move on
+            logger.error(f"Error during seek operation for track {self.current.title if self.current else 'N/A'}: {e}", exc_info=True)
+            # If seek fails, we need to signal the loop to potentially try the next track or stop
+            self.bot.loop.call_soon_threadsafe(self.next.set) # Move to next state
             return False
 
+    def _handle_play_error(self, error):
+        logger.error(f'Player error in after callback: {error}')
+        # Signal the loop to continue
+        self.bot.loop.call_soon_threadsafe(self.next.set)
 
     async def update_now_playing_message(self, track: Track | None = None, clear_view=False):
-        """Updates or sends the 'Now Playing' message with controls."""
-        if self._destroyed: return # Don't try to update if destroyed
-
-        # Use provided track or the current one
-        display_track = track or self.current
-
-        if not display_track: # If nothing is playing, clear the message
-            if self.now_playing_message:
-                 try:
-                     await self.now_playing_message.edit(content="Playback finished.", embed=None, view=None)
-                 except discord.NotFound:
-                     pass # Message already deleted
-                 except Exception as e:
-                     logger.warning(f"Failed to clear NP message: {e}")
-                 self.now_playing_message = None
+        if self._destroyed:
             return
 
-        # Create embed
+        display_track = track if track is not None else self.current # Explicitly check for None
+
+        # Case 1: Nothing playing, clear the message
+        if not display_track:
+            if self.now_playing_message:
+                logger.debug(f"Clearing Now Playing message (ID: {self.now_playing_message.id})")
+                try:
+                    await self.now_playing_message.edit(content="*Playback has ended.*", embed=None, view=None)
+                except discord.NotFound:
+                    logger.debug("Now Playing message not found during clear, likely deleted.")
+                    self.now_playing_message = None # Ensure it's cleared if not found
+                except discord.HTTPException as e:
+                    logger.warning(f"Failed to clear NP message: {e}")
+                    # Optionally retry or just clear the reference
+                    self.now_playing_message = None
+            return
+
+        # Case 2: Something is playing, update or send the message
         embed = display_track.to_embed(embed_type="now_playing")
-        embed.set_footer(text=f"Loop: {self.loop_mode} | Volume: {int(self.volume * 100)}%") # Assuming volume attr exists
+        embed.set_footer(text=f"Loop: {self.loop_mode.capitalize()} | Volume: {int(self.volume * 100)}% | Queue: {self.queue.qsize()} tracks")
 
-        # Add Progress Bar
-        current_pos, total_dur = self.get_progress()
-        if total_dur > 0:
-             from .voice_cog import format_duration, create_progress_bar # Temporary import (better structure avoids this)
-             progress_bar_text = create_progress_bar(current_pos, total_dur)
-             time_info = f"{format_duration(current_pos)} / {format_duration(total_dur)}"
-             embed.add_field(name="Progress", value=f"{progress_bar_text} {time_info}", inline=False)
-        elif display_track.duration == "LIVE":
-             embed.add_field(name="Progress", value="🔴 LIVE", inline=False)
+        current_pos, total_dur_val = self.get_progress()
 
-        # Create or get view
+        # Format progress bar and time info
+        try:
+            # Need to import these locally if they are in voice_cog.py
+            from .voice_cog import format_duration, create_progress_bar
+
+            progress_bar_text = create_progress_bar(current_pos, total_dur_val)
+
+            if display_track.duration == "LIVE" or total_dur_val == "LIVE":
+                 time_info = "🔴 LIVE"
+                 embed.add_field(name="Progress", value=f"{progress_bar_text} {time_info}", inline=False)
+            elif isinstance(total_dur_val, (int, float)) and total_dur_val > 0:
+                 time_info = f"{format_duration(current_pos)} / {format_duration(total_dur_val)}"
+                 embed.add_field(name="Progress", value=f"{progress_bar_text}\n{time_info}", inline=False)
+            else: # Duration unknown or 0, show only progress bar if desired
+                 # embed.add_field(name="Progress", value=f"{progress_bar_text} `[Unknown Duration]`", inline=False)
+                 # Or omit progress field entirely if duration is unknown
+                 pass # Decide if you want to show anything here
+
+        except ImportError:
+            logger.error("Could not import formatters for progress bar in player.py")
+            embed.add_field(name="Progress", value="`Error loading display utilities`", inline=False)
+        except Exception as e:
+             logger.error(f"Error creating progress display: {e}", exc_info=True)
+             embed.add_field(name="Progress", value="`Error displaying progress`", inline=False)
+
+
+        # Create or remove the view (controls)
         view = PlayerControls(self, self._cog) if not clear_view else None
 
-        # Send or edit message
+        # Send or edit the message
         if self.now_playing_message:
             try:
-                await self.now_playing_message.edit(embed=embed, view=view)
-            except discord.NotFound: # Message was deleted, send a new one
-                self.now_playing_message = await self._channel.send(embed=embed, view=view)
-            except Exception as e:
-                 logger.error(f"Failed to edit NP message: {e}")
-                 # Try sending new message as fallback
-                 try:
-                      self.now_playing_message = await self._channel.send(embed=embed, view=view)
-                 except Exception as send_e:
-                      logger.error(f"Also failed to send new NP message: {send_e}")
-                      self.now_playing_message = None # Give up
-        else:
-            try:
-                 self.now_playing_message = await self._channel.send(embed=embed, view=view)
-            except Exception as e:
-                 logger.error(f"Failed to send initial NP message: {e}")
-                 self.now_playing_message = None
+                await self.now_playing_message.edit(content=None, embed=embed, view=view)
+                logger.debug(f"Edited Now Playing message (ID: {self.now_playing_message.id})")
+            except discord.NotFound:
+                logger.debug("NP message not found on edit, sending new one.")
+                self.now_playing_message = None # Clear old reference
+                # Fall through to send a new message
+            except discord.HTTPException as e:
+                logger.error(f"Failed to edit NP message: {e} - Attempting to send new.")
+                self.now_playing_message = None
+                # Fall through to send a new message
 
-        # Update the view's internal message reference if it exists
+        # Send new message if needed
+        if not self.now_playing_message:
+            try:
+                # Ensure self._channel is valid before sending
+                if isinstance(self._channel, discord.TextChannel):
+                    self.now_playing_message = await self._channel.send(content=None, embed=embed, view=view)
+                    logger.info(f"Sent new Now Playing message (ID: {self.now_playing_message.id}) to channel {self._channel.id}")
+                else:
+                    logger.error(f"Cannot send Now Playing message: Invalid channel object ({self._channel})")
+
+            except discord.Forbidden:
+                 logger.error(f"Cannot send Now Playing message: Missing permissions in channel {self._channel.id if self._channel else 'N/A'}")
+                 self.now_playing_message = None # Ensure it's None if send fails
+            except Exception as e:
+                logger.error(f"Failed to send initial NP message: {e}", exc_info=True)
+                self.now_playing_message = None
+
+        # Assign message to view for interaction updates
         if view and self.now_playing_message:
-             view.message = self.now_playing_message
+            view.message = self.now_playing_message
 
 
     async def player_loop(self):
-        """Main player loop."""
         await self.bot.wait_until_ready()
+        logger.info(f"[PlayerLoop {self._guild.id}] Started.")
 
         while not self.bot.is_closed() and not self._destroyed:
             self.next.clear()
-            self.skip_votes.clear()
-
             next_track = None
+            source_for_play = None # Store the source we intend to play
+
             try:
-                # --- Handle Loop Modes ---
+                # --- Logic to get the next track ---
                 if self.loop_mode == 'song' and self.current:
-                    # Recreate source for the current track
-                    source_info = await YTDLSource.create_source(
-                        self.current.url, loop=self.bot.loop, requester=self.current.requester
-                    )
-                    next_track = Track(source_info, self.current.requester)
-                else:
-                    # Wait for the next song with timeout
-                    async with timeout(PLAYER_TIMEOUT): # e.g., 300 seconds (5 minutes)
-                        next_track = await self.queue.get()
-                        self.queue.task_done() # Mark task as done
+                    # Re-fetch the current song for looping
+                    logger.debug(f"[PlayerLoop {self._guild.id}] Looping current song: {self.current.title}")
+                    try:
+                        source_info = await YTDLSource.create_source(
+                            self.current.url, loop=self.bot.loop, requester=self.current.requester, stream=True
+                        )
+                        next_track = Track(source_info, self.current.requester)
+                        source_for_play = next_track.source # Get source early
+                    except Exception as e:
+                         logger.error(f"[PlayerLoop {self._guild.id}] Failed to re-fetch loop track {self.current.title}: {e}", exc_info=True)
+                         # If re-fetching fails, stop looping this song and try queue
+                         self.loop_mode = 'off'
+                         await self._channel.send(f"⚠️ Failed to loop '{self.current.title}', disabling song loop.", delete_after=15)
+                         # Fall through to get from queue normally
+                         pass
 
-            except asyncio.TimeoutError:
-                logger.info(f"Player for guild {self._guild.id} timed out due to inactivity.")
-                return self.destroy() # Disconnect after timeout
+                # Only get from queue if not looping song or if loop failed
+                if not next_track:
+                    logger.debug(f"[PlayerLoop {self._guild.id}] Waiting for next track from queue...")
+                    # REMOVED TIMEOUT BLOCK - Wait indefinitely
+                    next_track = await self.queue.get()
+                    self.queue.task_done()
+                    logger.debug(f"[PlayerLoop {self._guild.id}] Got track from queue: {next_track.title}")
+                    source_for_play = next_track.source # Get source
+
             except asyncio.CancelledError:
-                 logger.info(f"Player loop for guild {self._guild.id} cancelled.")
-                 return
+                logger.info(f"[PlayerLoop {self._guild.id}] Cancelled.")
+                return # Exit loop cleanly on cancellation
             except Exception as e:
-                 logger.error(f"Error getting next track in player loop: {e}")
-                 await asyncio.sleep(5) # Wait a bit before retrying
-                 continue # Go to next loop iteration
+                logger.error(f"[PlayerLoop {self._guild.id}] Unexpected error getting next track: {e}", exc_info=True)
+                await asyncio.sleep(5) # Wait before retrying loop iteration
+                continue # Go to next iteration
 
+            # --- Check if we successfully got a track and source ---
+            if not next_track or not source_for_play:
+                logger.warning(f"[PlayerLoop {self._guild.id}] Failed to obtain a valid track or source, continuing loop.")
+                self.current = None # Ensure current is cleared if we failed
+                await self.update_now_playing_message() # Clear NP display
+                continue # Skip playback attempt
 
-            # --- Playback ---
-            if not next_track: continue # Should not happen with proper logic, but safety check
-
+            # --- Play the track ---
             self.current = next_track
-            source_with_volume = discord.PCMVolumeTransformer(self.current.source, volume=self.volume)
+            self.skip_votes.clear() # Clear votes for the new song
+            logger.info(f"[PlayerLoop {self._guild.id}] Now Playing: {self.current.title} (URL: {self.current.url})")
+
+            source_with_volume = discord.PCMVolumeTransformer(source_for_play, volume=self.volume)
 
             try:
-                 if not self._guild.voice_client:
-                      logger.warning(f"Voice client not found for guild {self._guild.id} during playback.")
-                      self.current = None
-                      continue
+                vc = self._guild.voice_client
+                if not vc or not vc.is_connected():
+                    logger.warning(f"[PlayerLoop {self._guild.id}] Voice client missing or disconnected before playback. Stopping loop.")
+                    self.current = None # Clear current track
+                    # No self.destroy() here, let external command handle disconnect
+                    return # Exit the loop
 
-                 self._guild.voice_client.play(
+                # Play the source
+                vc.play(
                     source_with_volume,
-                    after=lambda _: self.bot.loop.call_soon_threadsafe(self.next.set)
-                 )
-                 self.playback_start_time = time.time()
-                 self.seek_offset = 0 # Reset seek offset for new track
+                    after=lambda e: self.bot.loop.call_soon_threadsafe(self.next.set) if not e else self._handle_play_error(e)
+                )
+                self.playback_start_time = time.time()
+                self.seek_offset = 0 # Reset seek offset for new track
+                await self.update_now_playing_message() # Update NP message for the new track
 
-                 # Send/Update the Now Playing message with controls
-                 await self.update_now_playing_message(track=self.current)
-
-                 # Wait for the song to finish playing
-                 await self.next.wait()
+                logger.debug(f"[PlayerLoop {self._guild.id}] Waiting for track '{self.current.title}' to finish or be skipped...")
+                await self.next.wait() # Wait until 'after' callback or skip sets the event
+                logger.debug(f"[PlayerLoop {self._guild.id}] Finished waiting for '{self.current.title}'.")
 
             except discord.ClientException as e:
-                 logger.error(f"Discord client exception during playback: {e}")
-                 await self._channel.send(f"Playback error: {e}. Skipping track.")
+                logger.error(f"[PlayerLoop {self._guild.id}] Discord client exception during playback setup: {e}")
+                if self._channel:
+                     try: await self._channel.send(f"Playback error: {e}. Skipping track.")
+                     except discord.Forbidden: pass
+                # Ensure next is set to proceed even if play fails immediately
+                self.bot.loop.call_soon_threadsafe(self.next.set)
+                await self.next.wait() # Wait briefly to allow state to settle
             except Exception as e:
-                logger.error(f"Unexpected error during playback: {e}")
-                await self._channel.send(f"An unexpected error occurred: {e}. Skipping track.")
-                # Don't continue loop if error is severe, let next.set handle it
+                logger.error(f"[PlayerLoop {self._guild.id}] Unexpected error during playback/wait: {e}", exc_info=True)
+                if self._channel:
+                    try: await self._channel.send(f"An unexpected error occurred: {e}. Skipping track.")
+                    except discord.Forbidden: pass
+                # Ensure next is set to proceed
+                self.bot.loop.call_soon_threadsafe(self.next.set)
+                await self.next.wait()
 
-            # --- After Playback ---
-            # If loop mode is 'queue', add the just-played song back to the end
+
+            # --- After track finishes or is skipped ---
+            previous_track_title = self.current.title if self.current else "N/A" # Store for logging/queue loop
+
+            # Handle queue looping
             if self.loop_mode == 'queue' and self.current:
-                try:
-                    # Recreate source needed as streams are consumed
-                    source_info = await YTDLSource.create_source(
-                        self.current.url, loop=self.bot.loop, requester=self.current.requester
-                    )
-                    requeued_track = Track(source_info, self.current.requester)
-                    await self.queue.put(requeued_track)
-                except Exception as e:
-                     logger.error(f"Failed to re-queue track for loop: {e}")
+                 logger.debug(f"[PlayerLoop {self._guild.id}] Re-queuing '{previous_track_title}' for queue loop.")
+                 try:
+                     # Re-fetch source info to ensure it's fresh for re-queueing
+                     source_info = await YTDLSource.create_source(
+                         self.current.url, loop=self.bot.loop, requester=self.current.requester, stream=True
+                     )
+                     requeued_track = Track(source_info, self.current.requester)
+                     await self.queue.put(requeued_track)
+                     logger.debug(f"[PlayerLoop {self._guild.id}] Successfully re-queued '{previous_track_title}'.")
+                 except Exception as e:
+                     logger.error(f"[PlayerLoop {self._guild.id}] Failed to re-queue track '{previous_track_title}': {e}", exc_info=True)
+                     if self._channel:
+                         try: await self._channel.send(f"⚠️ Failed to re-queue '{previous_track_title}' for loop.", delete_after=15)
+                         except discord.Forbidden: pass
 
-            # Clear current track info only AFTER handling queue loop
+
+            # --- Reset state for next iteration ---
             self.current = None
             self.playback_start_time = None
             self.seek_offset = 0
 
-            # If queue is empty after song finishes (and not looping queue), update message
+            # Update NP message if queue is empty and not looping queue (to clear controls)
             if self.queue.empty() and self.loop_mode != 'queue':
-                await self.update_now_playing_message(clear_view=True) # Clear NP message
+                 logger.debug(f"[PlayerLoop {self._guild.id}] Queue is empty after '{previous_track_title}' finished. Clearing NP controls.")
+                 await self.update_now_playing_message(clear_view=True) # Keep embed, remove buttons
 
-
-        # End of loop (bot closing or destroyed)
-        logger.debug(f"Player loop ended for guild {self._guild.id}.")
-        if not self._destroyed: # Ensure cleanup if loop ends unexpectedly
+        # --- Loop Exit ---
+        logger.info(f"[PlayerLoop {self._guild.id}] Loop ended (Bot closed or destroyed: {self._destroyed}).")
+        # Ensure final cleanup if loop ends unexpectedly
+        if not self._destroyed:
+            logger.warning(f"[PlayerLoop {self._guild.id}] Loop ended unexpectedly, calling destroy().")
             self.destroy()
 
-
     def destroy(self):
-        """Disconnect and cleanup the player resources."""
-        if self._destroyed: return
+        """Cleans up player resources."""
+        if self._destroyed:
+            return
         self._destroyed = True
         logger.info(f"Destroying player for guild {self._guild.id}")
 
-        # Cancel the player task to prevent it from restarting
+        # Cancel the player loop task
         if self._player_task and not self._player_task.done():
             self._player_task.cancel()
+            logger.debug(f"Cancelled player task for guild {self._guild.id}")
 
-        # Clean up the Now Playing message view
+        # Clear the queue
+        self.clear_queue()
+
+        # Clear Now Playing message (schedule as task)
         if self.now_playing_message:
-            asyncio.create_task(self._edit_np_message_safe(view=None))
+            logger.debug(f"Scheduling cleanup for Now Playing message (ID: {self.now_playing_message.id})")
+            # Use create_task for fire-and-forget edit
+            asyncio.create_task(self._edit_np_message_safe(content="*Playback ended.*", embed=None, view=None), name=f"NPCleanup-{self._guild.id}")
 
-        # Schedule the cog's cleanup (disconnect, remove from dict)
-        return self.bot.loop.create_task(self._cog.cleanup(self._guild))
+
+        # Call the cog's cleanup method (which handles disconnect)
+        # Important: Ensure this doesn't cause infinite loops if cleanup calls destroy
+        if self._cog:
+             asyncio.create_task(self._cog.cleanup(self._guild), name=f"CogCleanup-{self._guild.id}")
+        else:
+            logger.warning(f"Player for guild {self._guild.id} has no cog reference for cleanup.")
+
+        # Nullify references
+        self.current = None
+        # self._guild, self._channel, self._cog = None, None, None # Keep refs needed by cleanup tasks? Maybe not.
 
     async def _edit_np_message_safe(self, **kwargs):
-         """Safely edit the now playing message, handling potential errors."""
-         if not self.now_playing_message: return
-         try:
-              await self.now_playing_message.edit(**kwargs)
-         except discord.NotFound:
-              self.now_playing_message = None # Message gone
-         except discord.HTTPException as e:
-              logger.warning(f"Failed to edit NP message during cleanup: {e}")
-              self.now_playing_message = None # Assume message is problematic
+        """Safely edits the Now Playing message, handling potential errors."""
+        if not self.now_playing_message:
+            logger.debug("_edit_np_message_safe called but no message reference exists.")
+            return
+        try:
+            await self.now_playing_message.edit(**kwargs)
+            logger.debug(f"Successfully edited NP message (ID: {self.now_playing_message.id}) during cleanup.")
+            self.now_playing_message = None # Clear reference after successful edit
+        except discord.NotFound:
+            logger.debug(f"NP message (ID: {self.now_playing_message.id}) not found during cleanup edit.")
+            self.now_playing_message = None
+        except discord.HTTPException as e:
+            logger.warning(f"Failed to edit NP message (ID: {self.now_playing_message.id}) during cleanup: {e}")
+            # Still clear the reference even if edit fails
+            self.now_playing_message = None
 
-
-    # --- Control Methods ---
+    # --- Playback State Checks ---
     def is_playing(self) -> bool:
-        return self._guild.voice_client and self._guild.voice_client.is_playing()
+        vc = self._guild.voice_client
+        # Check both playing and current track exists, as vc.is_playing() might linger briefly after stop
+        return vc and vc.is_playing() and self.current is not None
 
     def is_paused(self) -> bool:
-        return self._guild.voice_client and self._guild.voice_client.is_paused()
+        vc = self._guild.voice_client
+        return vc and vc.is_paused()
 
-    def skip(self):
-        """Force skip the current song."""
-        self.skip_votes.clear() # Clear votes on forced skip
-        if self.is_playing() or self.is_paused():
-            self._guild.voice_client.stop() # Triggers the 'after' callback -> next.set()
-
-    def stop_current(self):
-         """Stops the current track without clearing the queue immediately."""
-         if self.is_playing() or self.is_paused():
-             self.loop_mode = 'off' # Turn off looping when stopping explicitly
-             self._guild.voice_client.stop()
-
+    # --- Playback Actions ---
     def pause(self):
-        if self.is_playing():
-            self._guild.voice_client.pause()
+        vc = self._guild.voice_client
+        if vc and vc.is_playing():
+            vc.pause()
+            logger.info(f"Paused playback in guild {self._guild.id}")
 
     def resume(self):
-        if self.is_paused():
-            self._guild.voice_client.resume()
+        vc = self._guild.voice_client
+        if vc and vc.is_paused():
+            vc.resume()
+            logger.info(f"Resumed playback in guild {self._guild.id}")
+
+    def skip(self):
+        """Stops the current track, triggering the 'after' callback and player loop progression."""
+        self.skip_votes.clear()
+        vc = self._guild.voice_client
+        if vc and (vc.is_playing() or vc.is_paused()):
+            logger.info(f"Skipping track in guild {self._guild.id}")
+            vc.stop() # Triggers the 'after' callback which sets self.next
+
+    def stop_current(self):
+        """Stops playback entirely for the current track, advancing the loop."""
+        vc = self._guild.voice_client
+        if vc and (vc.is_playing() or vc.is_paused()):
+             logger.info(f"Stopping current track explicitly in guild {self._guild.id}")
+             vc.stop() # Triggers the 'after' callback which sets self.next
