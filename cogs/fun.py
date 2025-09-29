@@ -61,12 +61,6 @@ class Fun(commands.Cog):
             
             if streak_info['streak_continued']:
                 message += f"\n🔥 Streak continued! Current streak: {streak_info['current_streak']} days"
-                
-                # Unlock reroll ability at 7 day streak
-                if streak_info['current_streak'] == 7:
-                    self.db.unlock_reroll_ability(user.id)
-                    message += "\n🎁 Congratulations! You've unlocked the reroll ability!"
-                    
             elif streak_info['streak_reset']:
                 message += f"\n❌ Streak reset! Starting new streak!"
                 
@@ -116,73 +110,6 @@ class Fun(commands.Cog):
         except Exception as e:
             await ctx.send("Error accessing Random.org. Please try again later.")
 
-    @commands.hybrid_command(name="reroll", description="Reroll your last success check if you have the ability")
-    async def reroll(self, ctx):
-        """Reroll your last успех check if you have the ability"""
-        await ctx.defer()
-        
-        try:
-            # Check if user has reroll ability
-            if not self.db.has_reroll_ability(ctx.author.id):
-                await ctx.send("You don't have the reroll ability!")
-                return
-
-            # Get exact execution time of last успех command
-            execution_time = self.db.get_command_execution_time(ctx.author.id, "успех")
-            if not execution_time:
-                await ctx.send("No active успех roll to reroll! Use !успех first.")
-                return
-
-            # Check if roll is still valid (within 12 hours)
-            current_time = datetime.now()
-            if current_time > execution_time + timedelta(hours=12):
-                await ctx.send("Your last success check has expired! Use !успех for a new roll.")
-                return
-
-            # Check if already rerolled this command
-            if self.db.has_rerolled(ctx.author.id, execution_time):
-                await ctx.send("You've already used your reroll for this успех check!")
-                return
-
-            # Get the previous success level from database
-            prev_success = None
-            with self.db.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT success_level
-                    FROM command_usage
-                    WHERE user_id = ? AND command_name = 'успех'
-                    AND used_at >= ?
-                    ORDER BY used_at DESC
-                    LIMIT 1
-                ''', (ctx.author.id, last_used))
-                result = cursor.fetchone()
-                if result:
-                    prev_success = result['success_level']
-
-            if prev_success is not None:
-                # Subtract the previous success level from total_success
-                with self.db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        UPDATE users
-                        SET total_success = total_success - ?
-                        WHERE user_id = ?
-                    ''', (prev_success, ctx.author.id))
-                    conn.commit()
-
-            # Process reroll
-            message, success_level = await self.handle_success_roll(ctx)
-            
-            # Mark this command as rerolled with exact execution time
-            self.db.add_reroll_usage(ctx.author.id, execution_time)
-            
-            await ctx.send(message)
-
-        except Exception as e:
-            await ctx.send("Error processing reroll. Please try again later.")
-            print(f"Error in reroll command: {str(e)}")
-
     @commands.hybrid_command(
     name="топ",
     description="View the success leaderboard"
@@ -213,7 +140,6 @@ class Fun(commands.Cog):
             # Safely get all values with defaults
             total_success = entry.get('total_success', 0)
             success_streak = entry.get('success_streak', 0)
-            has_reroll = entry.get('has_reroll_ability', False)
             highest_success = entry.get('highest_success', 0)
             avg_success = entry.get('avg_success', 0)
             total_attempts = entry.get('total_attempts', 0)
@@ -230,8 +156,6 @@ class Fun(commands.Cog):
 
             # Format achievements
             achievements = []
-            if has_reroll:
-                achievements.append("🎲 Reroll Master")
             if success_streak >= 7:
                 achievements.append(f"🔥 {success_streak}d Streak")
             if highest_success == 6:
@@ -301,26 +225,13 @@ class Fun(commands.Cog):
         )
         
         # Streak and Abilities
-        abilities = []
-        if stats['has_reroll_ability']:
-            abilities.append("🎲 Reroll Ability")
-            
         streak_text = f"🔥 {stats['success_streak']} days"
-        if stats['success_streak'] >= 7:
-            streak_text += "\n(Reroll Unlocked!)"
             
         embed.add_field(
             name="Current Streak",
             value=streak_text,
             inline=True
         )
-        
-        if abilities:
-            embed.add_field(
-                name="Unlocked Abilities",
-                value="\n".join(abilities),
-                inline=True
-            )
         
         # Last check timestamp
         if stats['last_success_check']:

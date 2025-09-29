@@ -41,8 +41,7 @@ class DatabaseHandler:
             new_columns = {
                 'total_success': 'INTEGER DEFAULT 0',
                 'success_streak': 'INTEGER DEFAULT 0',
-                'last_success_check': 'TIMESTAMP',
-                'has_reroll_ability': 'BOOLEAN DEFAULT 0'
+                'last_success_check': 'TIMESTAMP'
             }
 
             for column, data_type in new_columns.items():
@@ -101,16 +100,6 @@ class DatabaseHandler:
                 )
             ''')
 
-             # Create command_rerolls table to track reroll usage
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS command_rerolls (
-                    user_id INTEGER,
-                    command_time TIMESTAMP,
-                    rerolled BOOLEAN DEFAULT 0,
-                    PRIMARY KEY (user_id, command_time),
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
-                )
-            ''')
             # Create prompts table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS prompts (
@@ -175,27 +164,6 @@ class DatabaseHandler:
             ''', (model_name,))
             return [dict(row) for row in cursor.fetchall()]
         
-    def add_reroll_usage(self, user_id: int, command_time: datetime) -> None:
-        """Track that a user has used their reroll for a specific успех command"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO command_rerolls (user_id, command_time, rerolled)
-                VALUES (?, ?, 1)
-            ''', (user_id, command_time))
-            conn.commit()
-
-    def has_rerolled(self, user_id: int, command_time: datetime) -> bool:
-        """Check if user has already rerolled for a specific успех command"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT rerolled FROM command_rerolls
-                WHERE user_id = ? AND command_time = ?
-            ''', (user_id, command_time))
-            result = cursor.fetchone()
-            return bool(result and result['rerolled'])
-    
     def update_user(self, user_id: int, username: str) -> None:
         """Update or create user record"""
         with self.get_connection() as conn:
@@ -208,29 +176,6 @@ class DatabaseHandler:
                     last_active = CURRENT_TIMESTAMP
             ''', (user_id, username, username))
             conn.commit()
-
-    def unlock_reroll_ability(self, user_id: int) -> None:
-        """Unlock the reroll ability for a user"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE users
-                SET has_reroll_ability = 1
-                WHERE user_id = ?
-            ''', (user_id,))
-            conn.commit()
-
-    def has_reroll_ability(self, user_id: int) -> bool:
-        """Check if user has unlocked the reroll ability"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT has_reroll_ability
-                FROM users
-                WHERE user_id = ?
-            ''', (user_id,))
-            result = cursor.fetchone()
-            return bool(result and result['has_reroll_ability'])
 
     def log_command_usage(self, user_id: int, command_name: str, 
                          success_level: Optional[int] = None,
@@ -343,7 +288,6 @@ class DatabaseHandler:
                 SELECT 
                     u.total_success,
                     u.success_streak,
-                    u.has_reroll_ability,
                     u.last_success_check,
                     COUNT(DISTINCT cu.id) as total_attempts,
                     MAX(cu.success_level) as highest_success,
@@ -362,7 +306,6 @@ class DatabaseHandler:
             return {
                 'total_success': 0,
                 'success_streak': 0,
-                'has_reroll_ability': False,
                 'last_success_check': None,
                 'total_attempts': 0,
                 'highest_success': 0,
@@ -378,7 +321,6 @@ class DatabaseHandler:
                     u.username,
                     COALESCE(u.total_success, 0) as total_success,
                     COALESCE(u.success_streak, 0) as success_streak,
-                    COALESCE(u.has_reroll_ability, 0) as has_reroll_ability,
                     COUNT(DISTINCT cu.id) as total_attempts,
                     COALESCE(MAX(cu.success_level), 0) as highest_success,
                     COALESCE(AVG(CAST(cu.success_level AS FLOAT)), 0) as avg_success
@@ -393,7 +335,7 @@ class DatabaseHandler:
                         WHERE cu2.user_id = u.user_id 
                         AND cu2.command_name = 'успех'
                     )
-                GROUP BY u.user_id, u.username, u.total_success, u.success_streak, u.has_reroll_ability
+                GROUP BY u.user_id, u.username, u.total_success, u.success_streak
                 ORDER BY COALESCE(u.total_success, 0) DESC, COALESCE(u.success_streak, 0) DESC
                 LIMIT ?
             ''', (limit,))

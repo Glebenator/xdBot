@@ -3,8 +3,6 @@ import discord
 from discord.ext import commands
 from utils.db_handler import DatabaseHandler
 import config
-from typing import Optional
-from datetime import datetime, timedelta
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -143,47 +141,11 @@ class Admin(commands.Cog):
             ''', (user.id, user.name, streak, streak))
             
             conn.commit()
-            
-            # If streak >= 7, also grant reroll ability
-            if streak >= 7:
-                cursor.execute('''
-                    UPDATE users
-                    SET has_reroll_ability = 1
-                    WHERE user_id = ?
-                ''', (user.id,))
-                conn.commit()
-                await ctx.send(f"✅ Set {user.mention}'s streak to {streak} and granted reroll ability")
-            else:
-                await ctx.send(f"✅ Set {user.mention}'s streak to {streak}")
-                
+            await ctx.send(f"✅ Set {user.mention}'s streak to {streak}")
+
             conn.close()
         except Exception as e:
             await ctx.send(f"❌ Error setting streak: {str(e)}")
-
-    @commands.hybrid_command(
-        name="givereroll",
-        description="[ADMIN] Give reroll ability to a user"
-    )
-    @commands.has_permissions(administrator=True)
-    async def give_reroll(self, ctx, user: discord.Member):
-        """Give reroll ability to a user"""
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO users (user_id, username, has_reroll_ability)
-                VALUES (?, ?, 1)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    has_reroll_ability = 1
-            ''', (user.id, user.name))
-            
-            conn.commit()
-            conn.close()
-            
-            await ctx.send(f"✅ Gave reroll ability to {user.mention}")
-        except Exception as e:
-            await ctx.send(f"❌ Error giving reroll ability: {str(e)}")
 
     @commands.hybrid_command(
         name="resetstats",
@@ -200,8 +162,7 @@ class Admin(commands.Cog):
             cursor.execute('''
                 UPDATE users
                 SET total_success = 0,
-                    success_streak = 0,
-                    has_reroll_ability = 0
+                    success_streak = 0
                 WHERE user_id = ?
             ''', (user.id,))
             
@@ -209,12 +170,6 @@ class Admin(commands.Cog):
             cursor.execute('''
                 DELETE FROM command_usage
                 WHERE user_id = ? AND command_name = 'успех'
-            ''', (user.id,))
-            
-            # Clean up reroll tracking
-            cursor.execute('''
-                DELETE FROM command_rerolls
-                WHERE user_id = ?
             ''', (user.id,))
             
             conn.commit()
@@ -229,7 +184,6 @@ class Admin(commands.Cog):
     @add_points.error
     @remove_points.error
     @set_streak.error
-    @give_reroll.error
     @reset_stats.error
     async def admin_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
