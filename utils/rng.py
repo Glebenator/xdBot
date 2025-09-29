@@ -6,7 +6,7 @@ from typing import Optional, List
 import logging
 
 class RandomOrgRNG:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: Optional[str]):
         self.api_key = api_key
         self.base_url = "https://api.random.org/json-rpc/4/invoke"
         self.remaining_bits = None
@@ -21,6 +21,9 @@ class RandomOrgRNG:
 
     async def _make_request(self, method: str, params: dict) -> dict:
         """Make request to Random.org API"""
+        if not self.api_key:
+            return None
+
         session = await self._get_session()
         
         payload = {

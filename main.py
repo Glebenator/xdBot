@@ -7,11 +7,12 @@ import signal
 import discord
 from discord.ext import commands
 
-import config
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables before importing the configuration module
 load_dotenv()
+
+import config
 
 # Voice support has been removed from the bot; suppress the optional PyNaCl warning.
 discord.VoiceClient.warn_nacl = False
@@ -26,7 +27,7 @@ class DiscordBot(commands.Bot):
         intents.members = True
 
         super().__init__(
-            command_prefix=commands.when_mentioned_or(config.PREFIX),
+            command_prefix=commands.when_mentioned_or(config.settings.prefix),
             intents=intents,
             help_command=None  # We can create a custom help command later
         )
@@ -100,7 +101,7 @@ async def load_extensions(bot):
     logger.info("Extension loading complete. Loaded: %s, Failed: %s", loaded_cogs, failed_cogs)
 
 async def main():
-    token = os.getenv('DISCORD_TOKEN')
+    token = config.settings.discord_token
     if not token:
         raise RuntimeError("DISCORD_TOKEN is not set in the environment.")
 

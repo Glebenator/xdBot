@@ -1,95 +1,82 @@
-# Discord Bot
+# xdBot
 
-A versatile Discord bot built with discord.py that includes auto-replies, reactions, administrative commands, and fun features.
+A modular Discord bot built on top of `discord.py` featuring asynchronous data storage, hybrid command support, Random.org-powered fun commands, and optional LLM integrations.
 
-## Features
+## ✨ Highlights
 
-- Custom auto-replies with text and reactions
-- Reaction-only triggers
-- Administrative commands
-- Fun commands
-- Hybrid commands (supports both text and slash commands)
+- Fully async persistence layer backed by `aiosqlite` with multi-guild awareness
+- Hybrid (prefix + slash) commands with automatic ephemeral handling
+- Configurable Random.org integration with secure local fallback
+- Optional Ollama-powered LLM responses with chat history management
+- Modular cog structure for admin, moderation, fun, image, and voice features
 
-## Requirements
+## 📦 Requirements
 
-- Python 3.8 or higher
+- Python 3.10+
 - Dependencies listed in `requirements.txt`
-- Discord Bot Token
-- Discord server with appropriate permissions
+- Discord bot token with the necessary intents
+- (Optional) Random.org API key for true randomness
+- (Optional) Ollama endpoint for LLM features
 
-## Installation
+## ⚙️ Configuration
 
-1. Clone the repository:
+Configuration is centralised in `config.py` and automatically populated from environment variables (including values in `.env` files). The most relevant keys are:
+
+```
+DISCORD_TOKEN=your_discord_token
+BOT_PREFIX=!
+OWNER_IDS=123456789012345678,987654321098765432
+GUILD_ID=123456789012345678
+RANDOM_ORG_KEY=your_random_org_key_optional
+OLLAMA_URL=http://localhost:11434
+```
+
+- `BOT_PREFIX` defaults to `!`.
+- `OWNER_IDS` accepts a comma-separated list of user IDs.
+- `RANDOM_ORG_KEY` is optional; when omitted, the bot falls back to secure local randomness and lets users know.
+- `OLLAMA_URL` default is `http://192.168.50.69:11434` but can be overridden.
+
+All values are accessible through `config.settings` for consistent use across the code base.
+
+## 🚀 Getting Started
+
 ```bash
 git clone <repository-url>
-cd discord-bot
-```
-
-2. Install required packages:
-```bash
+cd xdBot
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 pip install -r requirements.txt
-```
-
-3. Create a `.env` file in the root directory and add your Discord token:
-```
-DISCORD_TOKEN=your_token_here
-```
-
-4. Configure `config.py` with your settings:
-```python
-PREFIX = '!'  # Command prefix
-OWNER_IDS = []  # Add your Discord user ID
-GUILD_ID = None  # Optional: Add your guild ID for guild-specific commands
-```
-
-## Running the Bot
-
-```bash
+cp .env.example .env  # create and update if example is provided
 python main.py
 ```
 
-## Commands
+If `.env.example` is not available, create a `.env` file manually and use the configuration keys listed above.
 
-### General Commands
-- `!help` - Display all available commands
-- `!ping` - Check bot's latency
+## 🧠 Key Cogs
 
-### Auto-Reply Commands
-- `!addreply <trigger> [response] [reactions]` - Add new auto-reply with optional text and reactions
-  - Example: `!addreply "hello" "Hi there!" "👋,😊"`
-- `!addreaction <trigger> <reactions>` - Add reaction-only trigger
-  - Example: `!addreaction "nice" "👍,🔥"`
-- `!removereply <trigger>` - Remove an auto-reply trigger
-- `!listreplies` - List all auto-reply triggers and responses
+- `admin`: owner/admin utilities for streaks, points, and cog management
+- `fun`: Random.org rolls, success streak tracking, and leaderboards
+- `moderation`: bad-word tracking, stats, and leaderboards
+- `llm`: chat and mention responses via Ollama models
+- `image`, `general`, `voice`: assorted utility features (see code for details)
 
-### Fun Commands
-- `!roll [max_number]` - Roll a random number (default: 1-100)
-  - Example: `!roll 20` - Roll between 1 and 20
+## 🛡️ Data Layer
 
-### Admin Commands
-- `!reload <extension>` - Reload a specific cog
-- `!sync` - Sync slash commands
+- Async `DatabaseHandler` backed by `aiosqlite`
+- Automatic schema migrations to multi-guild tables
+- Helper methods covering success stats, streaks, cooldowns, prompts, and word usage
 
-## Auto-Reply Features
+## 🔄 Development Tips
 
-The bot supports various types of auto-replies:
+- Use `python -m compileall .` to run fast syntax checks (no network/API calls)
+- Reload individual cogs with `!reload <cog>` during testing (owner-only)
+- The bot gracefully handles SIGINT/SIGTERM thanks to the shutdown routine in `main.py`
 
-1. Text-only replies:
-```
-!addreply "hello" "Hi there!"
-```
+## 🤖 Randomness & Fallbacks
 
-2. Reaction-only triggers:
-```
-!addreaction "nice" "👍,🔥"
-```
+- When `RANDOM_ORG_KEY` is configured, the bot uses true randomness via Random.org
+- Without the key, it transparently falls back to `secrets.randbelow`, notifying users that true randomness is temporarily unavailable
 
-3. Combined text and reactions:
-```
-!addreply "wow" "That's amazing!" "😮,🎉"
-```
+## 📚 License
 
-4. User mentions in replies:
-```
-!addreply "welcome" "Hello {user}! Welcome to the server!" "👋"
-```
+See `LICENSE` (if provided) or add one to document your usage terms.

@@ -3,17 +3,18 @@ import discord
 from discord.ext import commands
 from utils.helpers import create_embed, send_hybrid_message
 from utils.ollama_handler import OllamaHandler, ModelConfig
-import os
 from typing import Optional, List  # Added List import
 import logging
 import asyncio
+
+import config
 
 class LLM(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         
         # Initialize Ollama handler
-        ollama_url = os.getenv('OLLAMA_URL', 'http://192.168.50.69:11434')
+        ollama_url = config.settings.ollama_url
         self.ollama = OllamaHandler(base_url=ollama_url)
         
         # Register models with specific configurations

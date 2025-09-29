@@ -8,17 +8,20 @@ from utils.rng import RandomOrgRNG
 from datetime import datetime, timedelta
 import logging
 import random
-import os
+
+import config
 
 
 class Fun(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = DatabaseHandler()
-        api_key = os.getenv('RANDOM_ORG_KEY')
-        if not api_key:
-            raise ValueError("RANDOM_ORG_KEY not found in environment variables")
-        self.rng = RandomOrgRNG(api_key)
+        self.random_org_enabled = config.settings.random_org_enabled
+        if not self.random_org_enabled:
+            logging.warning(
+                "RANDOM_ORG_KEY is not configured; falling back to local pseudo-random numbers."
+            )
+        self.rng = RandomOrgRNG(config.settings.random_org_api_key)
 
     async def cog_unload(self):
         """Cleanup when cog is unloaded"""
@@ -80,6 +83,9 @@ class Fun(commands.Cog):
             elif streak_info['streak_reset']:
                 message += f"\n❌ Streak reset! Starting new streak!"
                 
+            if not self.random_org_enabled:
+                message += "\nℹ️ True randomness unavailable; using fallback RNG until a Random.org key is configured."
+
             return message, success_level
         except Exception as e:
             logging.error(f"Error processing success roll: {str(e)}")
@@ -296,7 +302,10 @@ class Fun(commands.Cog):
                 "roll",
                 roll_value=number
             )
-            await ctx.send(f"{ctx.author.mention} rolled {number} 🎲")
+            response = f"{ctx.author.mention} rolled {number} 🎲"
+            if not self.random_org_enabled:
+                response += "\nℹ️ True randomness unavailable; using fallback RNG until a Random.org key is configured."
+            await ctx.send(response)
         except Exception as e:
             await ctx.send("Error accessing Random.org. Please try again later.")
         

@@ -64,12 +64,12 @@ class General(commands.Cog):
             
             for command in sorted(commands, key=lambda x: x.name):
                 embed.add_field(
-                    name=f"{config.PREFIX}{command.name}",
+                    name=f"{config.settings.prefix}{command.name}",
                     value=command.description or "No description available",
                     inline=False
                 )
             
-            footer_text = f"Type {config.PREFIX}help to see all categories"
+            footer_text = f"Type {config.settings.prefix}help to see all categories"
             embed.set_footer(text=footer_text)
             await ctx.send(embed=embed)
             
@@ -84,11 +84,11 @@ class General(commands.Cog):
             for idx, (category, commands) in enumerate(category_list, 1):
                 embed.add_field(
                     name=f"{idx}. {category} ({len(commands)})",
-                    value=f"Use `{config.PREFIX}help {idx}` to view commands",
+                    value=f"Use `{config.settings.prefix}help {idx}` to view commands",
                     inline=True
                 )
                 
-            footer_text = f"Example: {config.PREFIX}help 1"
+            footer_text = f"Example: {config.settings.prefix}help 1"
             embed.set_footer(text=footer_text)
             
             await ctx.send(embed=embed)
