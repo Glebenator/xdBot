@@ -1,8 +1,8 @@
 # cogs/moderation.py
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed, send_hybrid_message
-from utils.db_handler import DatabaseHandler
+from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
+from utils.db_handler import get_database_handler
 from utils.word_filter import WordFilter
 from typing import Optional
 from datetime import datetime
@@ -10,7 +10,7 @@ from datetime import datetime
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db = DatabaseHandler()
+        self.db = get_database_handler()
         self.word_filter = WordFilter()
 
     @staticmethod
@@ -46,6 +46,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def add_word(self, ctx, *, word: str):
         """Add a new word to track"""
+        await defer_hybrid(ctx, ephemeral=True)
         # Delete the command message to keep the word private
         try:
             await ctx.message.delete()
@@ -72,6 +73,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def remove_word(self, ctx, *, word: str):
         """Remove a word from tracking"""
+        await defer_hybrid(ctx, ephemeral=True)
         # Delete the command message to keep the word private
         try:
             await ctx.message.delete()
@@ -98,6 +100,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def word_stats(self, ctx, user: Optional[discord.Member] = None):
         """View word usage statistics for a user"""
+        await defer_hybrid(ctx, ephemeral=True)
         guild_id = self._require_guild(ctx)
         target_user = user or ctx.author
         stats = await self.db.get_user_word_stats(
@@ -134,6 +137,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def word_leaderboard(self, ctx, word: Optional[str] = None):
         """View leaderboard for word usage"""
+        await defer_hybrid(ctx, ephemeral=True)
         guild_id = self._require_guild(ctx)
         leaderboard = await self.db.get_word_leaderboard(
             guild_id,

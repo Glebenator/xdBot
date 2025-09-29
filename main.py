@@ -1,4 +1,5 @@
 # main.py
+import ast
 import os
 import logging
 import asyncio
@@ -6,11 +7,6 @@ import signal
 
 import discord
 from discord.ext import commands
-
-from dotenv import load_dotenv
-
-# Load environment variables before importing the configuration module
-load_dotenv()
 
 import config
 
@@ -54,40 +50,57 @@ class DiscordBot(commands.Bot):
             )
         )
 
+def _module_has_setup(source_path: str) -> bool:
+    try:
+        with open(source_path, "r", encoding="utf-8") as handle:
+            module_ast = ast.parse(handle.read(), filename=source_path)
+    except (OSError, SyntaxError) as exc:
+        logger.warning("Skipping %s due to parse error: %s", source_path, exc)
+        return False
+
+    for node in module_ast.body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "setup":
+            return True
+    return False
+
+
+def _iter_extension_paths(root: str) -> list[str]:
+    extensions: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and not d.startswith("__")]
+
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            if filename.startswith("__"):
+                continue
+
+            full_path = os.path.join(dirpath, filename)
+            if not _module_has_setup(full_path):
+                logger.debug("Skipping %s as it lacks an async setup", full_path)
+                continue
+            rel_path = os.path.relpath(full_path, root)
+            module = rel_path[:-3].replace(os.sep, ".")  # strip .py
+            extensions.append(f"{root}.{module}")
+    return extensions
+
+
 async def load_extensions(bot):
-    """Load all extensions (cogs) from the cogs directory including subdirectories."""
-    cog_dir = "cogs"  # Adjust if your cogs are in a different directory
-    
+    """Load all extensions (cogs) from the cogs directory including subpackages."""
+    cog_dir = "cogs"
+
     logger.info("Loading extensions from %s...", cog_dir)
 
-    extensions_to_load = []
-    
-    # Walk through the cogs directory and load extensions
-    for item in os.listdir(cog_dir):
-        item_path = os.path.join(cog_dir, item)
-        
-        # Skip hidden files/folders and __pycache__
-        if item.startswith("__") or item.startswith("."):
-            continue
-            
-        extension_path = None
-        
-        # Case 1: Item is a Python file
-        if os.path.isfile(item_path) and item.endswith('.py'):
-            extension_path = f"{cog_dir}.{item[:-3]}"  # Remove the .py extension
-            
-        # Case 2: Item is a directory with an __init__.py file (module)
-        elif os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "__init__.py")):
-            extension_path = f"{cog_dir}.{item}"
-        
-        # Load the extension if it's valid
-        if extension_path and extension_path not in extensions_to_load:
-            extensions_to_load.append(extension_path)
+    try:
+        extensions_to_load = sorted(set(_iter_extension_paths(cog_dir)))
+    except FileNotFoundError:
+        logger.error("Cog directory %s was not found. No extensions loaded.", cog_dir)
+        return
 
     loaded_cogs = 0
     failed_cogs = 0
 
-    for extension_path in sorted(extensions_to_load):
+    for extension_path in extensions_to_load:
         try:
             await bot.load_extension(extension_path)
             logger.info("✅ Loaded extension: %s", extension_path)

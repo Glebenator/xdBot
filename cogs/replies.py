@@ -4,7 +4,7 @@ from discord.ext import commands
 from typing import Dict, List, Union, Tuple
 import json
 import os
-from utils.helpers import create_embed
+from utils.helpers import create_embed, defer_hybrid
 
 class Replies(commands.Cog):
     def __init__(self, bot):
@@ -75,6 +75,7 @@ class Replies(commands.Cog):
         reactions: str, optional
             Comma-separated list of emoji reactions (e.g., "👍,❤️,😊")
         """
+        await defer_hybrid(ctx)
         reaction_list = []
         if reactions:
             reaction_list = [r.strip() for r in reactions.split(",")]
@@ -100,6 +101,7 @@ class Replies(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def remove_reply(self, ctx, trigger: str) -> None:
         """Remove a trigger word and its responses"""
+        await defer_hybrid(ctx)
         trigger = trigger.lower()
         if trigger in self.replies:
             reply_data = self.replies.pop(trigger)
@@ -132,6 +134,7 @@ class Replies(commands.Cog):
         reactions: str
             Comma-separated list of emoji reactions (e.g., "👍,❤️,😊")
         """
+        await defer_hybrid(ctx)
         reaction_list = [r.strip() for r in reactions.split(",")]
             
         if not reaction_list:
@@ -154,6 +157,7 @@ class Replies(commands.Cog):
     @commands.hybrid_command(name="listreplies", description="List all auto-reply triggers and responses")
     async def list_replies(self, ctx) -> None:
         """List all trigger words and their responses"""
+        await defer_hybrid(ctx)
         embed = create_embed(
             title="Auto-Replies List",
             description="Here are all the current auto-replies:",

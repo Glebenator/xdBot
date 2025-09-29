@@ -55,3 +55,26 @@ async def send_hybrid_message(
         embed=embed,
         **kwargs
     )
+
+
+async def defer_hybrid(ctx, *, ephemeral: bool = False) -> bool:
+    """Safely defer hybrid command responses when invoked as slash commands.
+
+    Returns True when a defer call was issued, False otherwise. Prefix
+    invocations simply return False without raising."""
+    interaction = getattr(ctx, "interaction", None)
+    if interaction:
+        if interaction.response.is_done():
+            return False
+        await interaction.response.defer(ephemeral=ephemeral)
+        return True
+
+    defer = getattr(ctx, "defer", None)
+    if callable(defer):
+        try:
+            await defer()
+            return True
+        except TypeError:
+            return False
+
+    return False

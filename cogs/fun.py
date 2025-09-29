@@ -2,8 +2,8 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button
-from utils.helpers import create_embed
-from utils.db_handler import DatabaseHandler
+from utils.helpers import create_embed, defer_hybrid
+from utils.db_handler import get_database_handler
 from utils.rng import RandomOrgRNG
 from datetime import datetime, timedelta
 import logging
@@ -15,7 +15,7 @@ import config
 class Fun(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db = DatabaseHandler()
+        self.db = get_database_handler()
         self.random_org_enabled = config.settings.random_org_enabled
         if not self.random_org_enabled:
             logging.warning(
@@ -94,7 +94,7 @@ class Fun(commands.Cog):
     @commands.hybrid_command(name="успех", description="See how successful you are today using true randomness (once per 12h)")
     async def success(self, ctx):
         """Check your daily success level"""
-        await ctx.defer()
+        await defer_hybrid(ctx)
 
         guild_id = self._require_guild(ctx)
         user_id = ctx.author.id
@@ -150,6 +150,7 @@ class Fun(commands.Cog):
 )
     async def success_leaderboard(self, ctx):
         """View the успех command leaderboard"""
+        await defer_hybrid(ctx)
         guild_id = self._require_guild(ctx)
         leaderboard_data = await self.db.get_success_leaderboard(guild_id)
         
@@ -232,6 +233,7 @@ class Fun(commands.Cog):
     )
     async def success_stats(self, ctx):
         """View detailed success statistics"""
+        await defer_hybrid(ctx)
         guild_id = self._require_guild(ctx)
         stats = await self.db.get_success_stats(guild_id, ctx.author.id)
         
@@ -283,7 +285,7 @@ class Fun(commands.Cog):
     @commands.hybrid_command(name="roll", description="Roll a random number using Random.org")
     async def roll(self, ctx, max_num: int = 100):
         """Roll a random number between 1 and max_num using true randomness from Random.org"""
-        await ctx.defer()  # Acknowledge command while we wait for Random.org
+        await defer_hybrid(ctx)  # Acknowledge command while we wait for Random.org
         
         # Update database
         guild_id = self._require_guild(ctx)

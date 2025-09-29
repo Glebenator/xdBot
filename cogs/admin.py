@@ -1,13 +1,14 @@
 # cogs/admin.py
 import discord
 from discord.ext import commands
-from utils.db_handler import DatabaseHandler
+from utils.db_handler import get_database_handler
+from utils.helpers import defer_hybrid
 import config
 
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db = DatabaseHandler()  # Initialize database handler
+        self.db = get_database_handler()
 
     @staticmethod
     def _require_guild(ctx) -> int:
@@ -42,6 +43,7 @@ class Admin(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def set_points(self, ctx, user: discord.Member, points: int):
         """Set a user's total success points"""
+        await defer_hybrid(ctx)
         try:
             guild_id = self._require_guild(ctx)
             await self.db.set_total_success(guild_id, user.id, user.display_name, points)
@@ -56,6 +58,7 @@ class Admin(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def add_points(self, ctx, user: discord.Member, points: int):
         """Add success points to a user"""
+        await defer_hybrid(ctx)
         try:
             guild_id = self._require_guild(ctx)
             await self.db.update_user(guild_id, user.id, user.display_name)
@@ -71,6 +74,7 @@ class Admin(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def remove_points(self, ctx, user: discord.Member, points: int):
         """Remove success points from a user"""
+        await defer_hybrid(ctx)
         try:
             guild_id = self._require_guild(ctx)
             current_points = await self.db.get_total_success(guild_id, user.id)
@@ -90,6 +94,7 @@ class Admin(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def set_streak(self, ctx, user: discord.Member, streak: int):
         """Set a user's success streak"""
+        await defer_hybrid(ctx)
         try:
             guild_id = self._require_guild(ctx)
             await self.db.set_success_streak(guild_id, user.id, user.display_name, streak)
@@ -104,6 +109,7 @@ class Admin(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def reset_stats(self, ctx, user: discord.Member):
         """Reset all success-related stats for a user"""
+        await defer_hybrid(ctx)
         try:
             guild_id = self._require_guild(ctx)
             await self.db.reset_success_stats(guild_id, user.id)

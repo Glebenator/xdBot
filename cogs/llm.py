@@ -1,9 +1,9 @@
 # cogs/llm.py
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed, send_hybrid_message
+from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
 from utils.ollama_handler import OllamaHandler, ModelConfig
-from typing import Optional, List  # Added List import
+from typing import Optional, List, Set  # Added Set import
 import logging
 import asyncio
 
@@ -16,6 +16,7 @@ class LLM(commands.Cog):
         # Initialize Ollama handler
         ollama_url = config.settings.ollama_url
         self.ollama = OllamaHandler(base_url=ollama_url)
+        self._background_tasks: Set[asyncio.Task] = set()
         
         # Register models with specific configurations
         self.model_configs = {
@@ -40,8 +41,29 @@ class LLM(commands.Cog):
         }
 
         # Register models with the handler
-        for config in self.model_configs.values():
-            self.ollama.register_model(config)
+        for model_cfg in self.model_configs.values():
+            self.ollama.register_model(model_cfg)
+
+    async def cog_unload(self):
+        for task in list(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        await self.ollama.close()
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._handle_task_result)
+
+    def _handle_task_result(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logging.error("Background task failed in LLM cog: %s", exc, exc_info=True)
 
     def format_model_response(self, content: str) -> tuple[str, Optional[str]]:
         """Format model response by separating thinking and response parts"""
@@ -162,40 +184,43 @@ class LLM(commands.Cog):
         """Handle mentions using the rude bot model"""
         if message.author == self.bot.user:
             return
-            
+
         if self.bot.user in message.mentions:
             content = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
             if content:
-                response_message = None
-                try:
-                    async with message.channel.typing():
-                        response = await self.ollama.generate_response(
-                            message.author.id,
-                            content,
-                            self.model_configs['mention'].model_name
-                        )
-                    
-                    if response.startswith("Error:"):
-                        embed = create_embed(
-                            title="Error",
-                            description=response,
-                            color=discord.Color.red().value
-                        )
-                        response_message = await message.reply(embed=embed)
-                    else:
-                        # Split into response and thinking parts
-                        response_text, thinking = self.format_model_response(response)
-                        response_message = await self.send_response_with_thinking(None, response_text, thinking, reply_to=message)
-                
-                except Exception as e:
-                    logging.error(f"Error in on_message handler: {e}")
-                    embed = create_embed(
-                        title="Error",
-                        description=f"An error occurred: {str(e)}",
-                        color=discord.Color.red().value
-                    )
-                    if not response_message:
-                        await message.reply(embed=embed)
+                task = asyncio.create_task(self._handle_mention(message, content))
+                self._track_task(task)
+
+    async def _handle_mention(self, message: discord.Message, content: str) -> None:
+        response_message = None
+        try:
+            async with message.channel.typing():
+                response = await self.ollama.generate_response(
+                    message.author.id,
+                    content,
+                    self.model_configs['mention'].model_name
+                )
+
+            if response.startswith("Error:"):
+                embed = create_embed(
+                    title="Error",
+                    description=response,
+                    color=discord.Color.red().value
+                )
+                response_message = await message.reply(embed=embed)
+            else:
+                response_text, thinking = self.format_model_response(response)
+                response_message = await self.send_response_with_thinking(None, response_text, thinking, reply_to=message)
+
+        except Exception as exc:
+            logging.error("Error handling mention response: %s", exc, exc_info=True)
+            embed = create_embed(
+                title="Error",
+                description=f"An error occurred: {str(exc)}",
+                color=discord.Color.red().value
+            )
+            if not response_message:
+                await message.reply(embed=embed)
 
     @commands.hybrid_command(
         name="chat",
@@ -203,7 +228,7 @@ class LLM(commands.Cog):
     )
     async def chat(self, ctx, *, message: str):
         """Chat with the technical assistant model"""
-        await ctx.defer()
+        await defer_hybrid(ctx)
         response_message = None
         
         try:
@@ -249,8 +274,8 @@ class LLM(commands.Cog):
     )
     async def clear_chat(self, ctx, model_type: Optional[str] = None):
         """Clear the conversation history"""
+        await defer_hybrid(ctx)
         message = None
-        responded = False
         try:
             if model_type:
                 if model_type not in self.model_configs:
@@ -285,6 +310,7 @@ class LLM(commands.Cog):
     )
     async def show_history(self, ctx, model_type: Optional[str] = None):
         """Display the conversation history"""
+        await defer_hybrid(ctx, ephemeral=True)
         message = None
         try:
             if model_type:
@@ -304,7 +330,7 @@ class LLM(commands.Cog):
                     description="No chat history found.",
                     color=discord.Color.blue().value
                 )
-                await send_hybrid_message(ctx, embed=embed)
+                await send_hybrid_message(ctx, embed=embed, ephemeral=True)
                 responded = True
                 return
 
@@ -343,6 +369,7 @@ class LLM(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def model_stats(self, ctx, minutes: int = 60):
         """Show model usage statistics"""
+        await defer_hybrid(ctx)
         try:
             metrics = self.ollama.get_metrics(minutes)
             

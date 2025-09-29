@@ -6,7 +6,7 @@ import numpy as np
 import mediapipe as mp
 import tempfile
 import os
-from utils.helpers import create_embed
+from utils.helpers import create_embed, defer_hybrid
 
 class ImageProcessing(commands.Cog):
     def __init__(self, bot):
@@ -95,7 +95,7 @@ class ImageProcessing(commands.Cog):
             await ctx.send("Please provide a valid image file (PNG, JPG, JPEG, or WEBP)!")
             return
 
-        await ctx.defer()  # Defer response since image processing might take time
+        await defer_hybrid(ctx)  # Defer response since image processing might take time
 
         try:
             # Download the image

@@ -853,3 +853,14 @@ class DatabaseHandler:
                 if row and row["execution_time"]:
                     return datetime.fromisoformat(row["execution_time"])
                 return None
+
+
+_shared_db_handler: Optional[DatabaseHandler] = None
+
+
+def get_database_handler() -> DatabaseHandler:
+    """Return a lazily initialised shared database handler."""
+    global _shared_db_handler
+    if _shared_db_handler is None:
+        _shared_db_handler = DatabaseHandler()
+    return _shared_db_handler
