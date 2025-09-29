@@ -3,3 +3,4 @@ bot_test.py
 __pycache__/
 .dockerignore
 utils/systempromt.py
+GEMINI.md

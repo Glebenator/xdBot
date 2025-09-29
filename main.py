@@ -1,28 +1,45 @@
 # main.py
 import os
+import logging
+import asyncio
+
 import discord
 from discord.ext import commands
+
 import config
 from dotenv import load_dotenv
-import asyncio
 
 # Load environment variables
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class DiscordBot(commands.Bot):
     def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+
         super().__init__(
             command_prefix=commands.when_mentioned_or(config.PREFIX),
-            intents=discord.Intents.all(),
+            intents=intents,
             help_command=None  # We can create a custom help command later
         )
         
     async def setup_hook(self):
         await load_extensions(self)
+        try:
+            await self.tree.sync()
+            logger.info("Application commands synced")
+        except Exception as exc:
+            logger.error("Failed to sync application commands: %s", exc)
 
     async def on_ready(self):
-        print(f'{self.user} has connected to Discord!')
-        print(f'Bot is in {len(self.guilds)} guilds')
+        if not self.user:
+            return
+        logger.info("%s has connected to Discord!", self.user)
+        logger.info("Bot is in %s guilds", len(self.guilds))
         
         # Set custom status
         await self.change_presence(
@@ -36,11 +53,9 @@ async def load_extensions(bot):
     """Load all extensions (cogs) from the cogs directory including subdirectories."""
     cog_dir = "cogs"  # Adjust if your cogs are in a different directory
     
-    print(f"Loading extensions from {cog_dir}...")
-    
-    # Count loaded cogs for summary
-    loaded_cogs = 0
-    failed_cogs = 0
+    logger.info("Loading extensions from %s...", cog_dir)
+
+    extensions_to_load = []
     
     # Walk through the cogs directory and load extensions
     for item in os.listdir(cog_dir):
@@ -61,17 +76,24 @@ async def load_extensions(bot):
             extension_path = f"{cog_dir}.{item}"
         
         # Load the extension if it's valid
-        if extension_path:
-            try:
-                await bot.load_extension(extension_path)
-                await bot.load_extension("cogs.voice")
-                print(f"✅ Loaded extension: {extension_path}")
-                loaded_cogs += 1
-            except Exception as e:
-                print(f"❌ Failed to load extension {extension_path}: {e}")
-                failed_cogs += 1
-    
-    print(f"Extension loading complete. Loaded: {loaded_cogs}, Failed: {failed_cogs}")
+        if extension_path and extension_path not in extensions_to_load:
+            extensions_to_load.append(extension_path)
+
+    loaded_cogs = 0
+    failed_cogs = 0
+
+    for extension_path in sorted(extensions_to_load):
+        try:
+            await bot.load_extension(extension_path)
+            logger.info("✅ Loaded extension: %s", extension_path)
+            loaded_cogs += 1
+        except commands.errors.ExtensionAlreadyLoaded:
+            logger.warning("Extension already loaded: %s", extension_path)
+        except Exception as exc:
+            logger.error("❌ Failed to load extension %s: %s", extension_path, exc)
+            failed_cogs += 1
+
+    logger.info("Extension loading complete. Loaded: %s, Failed: %s", loaded_cogs, failed_cogs)
 
 async def main():
     bot = DiscordBot()
