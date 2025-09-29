@@ -14,7 +14,7 @@ from utils.audio_effects import AUDIO_EFFECTS
 
 class ButtonHandler:
     """Base class for button interaction handlers"""
-    
+"""Voice functionality removed."""
     @staticmethod
     async def handle_button(interaction: discord.Interaction, bot):
         """Route the button interaction to the appropriate handler"""

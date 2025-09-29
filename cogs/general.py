@@ -21,8 +21,6 @@ class General(commands.Cog):
             return "Moderation"
         elif cog_name == "Admin":
             return "Admin"
-        elif cog_name == "Voice":
-            return "Voice & Music"
         elif cog_name == "Replies":
             return "Auto-Replies"
         elif cog_name == "LLM":
