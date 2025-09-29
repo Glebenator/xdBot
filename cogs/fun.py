@@ -53,11 +53,23 @@ class Fun(commands.Cog):
             message = f"{user.mention} {message_part}"
             
             # Update database
-            self.db.log_command_usage(user.id, "успех", success_level=success_level)
-            self.db.update_total_success(user.id, success_level)
+            await self.db.run_async(
+                self.db.log_command_usage,
+                user.id,
+                "успех",
+                success_level=success_level
+            )
+            await self.db.run_async(
+                self.db.update_total_success,
+                user.id,
+                success_level
+            )
             
             # Update streak and get streak info
-            streak_info = self.db.update_success_streak(user.id)
+            streak_info = await self.db.run_async(
+                self.db.update_success_streak,
+                user.id
+            )
             
             if streak_info['streak_continued']:
                 message += f"\n🔥 Streak continued! Current streak: {streak_info['current_streak']} days"
@@ -78,10 +90,14 @@ class Fun(commands.Cog):
         current_time = datetime.now()
         
         # Update user record
-        self.db.update_user(user_id, ctx.author.name)
+        await self.db.run_async(self.db.update_user, user_id, ctx.author.name)
         
         # Check cooldown
-        last_used = self.db.get_command_cooldown(user_id, "успех")
+        last_used = await self.db.run_async(
+            self.db.get_command_cooldown,
+            user_id,
+            "успех"
+        )
         if last_used:
             next_available = last_used + timedelta(hours=12)
             if current_time < next_available:
@@ -99,12 +115,20 @@ class Fun(commands.Cog):
 
         try:
             # Record exact execution time
-            execution_time = self.db.record_command_execution(user_id, "успех")
+            execution_time = await self.db.run_async(
+                self.db.record_command_execution,
+                user_id,
+                "успех"
+            )
             
             message, success_level = await self.handle_success_roll(ctx)
             
             # Update cooldown
-            self.db.update_command_cooldown(user_id, "успех")
+            await self.db.run_async(
+                self.db.update_command_cooldown,
+                user_id,
+                "успех"
+            )
             await ctx.send(message)
             
         except Exception as e:
@@ -116,7 +140,9 @@ class Fun(commands.Cog):
 )
     async def success_leaderboard(self, ctx):
         """View the успех command leaderboard"""
-        leaderboard_data = self.db.get_success_leaderboard()
+        leaderboard_data = await self.db.run_async(
+            self.db.get_success_leaderboard
+        )
         
         if not leaderboard_data:
             await ctx.send("No успех data available yet!")
@@ -197,7 +223,10 @@ class Fun(commands.Cog):
     )
     async def success_stats(self, ctx):
         """View detailed success statistics"""
-        stats = self.db.get_success_stats(ctx.author.id)
+        stats = await self.db.run_async(
+            self.db.get_success_stats,
+            ctx.author.id
+        )
         
         embed = create_embed(
             title=f"Success Stats for {ctx.author.name}",
@@ -250,11 +279,20 @@ class Fun(commands.Cog):
         await ctx.defer()  # Acknowledge command while we wait for Random.org
         
         # Update database
-        self.db.update_user(ctx.author.id, ctx.author.name)
+        await self.db.run_async(
+            self.db.update_user,
+            ctx.author.id,
+            ctx.author.name
+        )
         
         try:
             number = await self.rng.randint(1, max_num)
-            self.db.log_command_usage(ctx.author.id, "roll", roll_value=number)
+            await self.db.run_async(
+                self.db.log_command_usage,
+                ctx.author.id,
+                "roll",
+                roll_value=number
+            )
             await ctx.send(f"{ctx.author.mention} rolled {number} 🎲")
         except Exception as e:
             await ctx.send("Error accessing Random.org. Please try again later.")

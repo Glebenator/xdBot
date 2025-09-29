@@ -1,7 +1,7 @@
 # cogs/moderation.py
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed
+from utils.helpers import create_embed, send_hybrid_message
 from utils.db_handler import DatabaseHandler
 from utils.word_filter import WordFilter
 from typing import Optional
@@ -25,7 +25,8 @@ class Moderation(commands.Cog):
         if found_words:
             # Update database for each found word
             for word in found_words:
-                self.db.log_word_usage(
+                await self.db.run_async(
+                    self.db.log_word_usage,
                     message.author.id,
                     word
                 )
@@ -53,8 +54,8 @@ class Moderation(commands.Cog):
                 color=discord.Color.yellow().value
             )
         
-        # Send response as ephemeral message
-        await ctx.send(embed=embed, ephemeral=True)
+        # Send response appropriately for the context
+        await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="removeword", description="Remove a word from tracking")
     @commands.has_permissions(manage_messages=True)
@@ -79,18 +80,25 @@ class Moderation(commands.Cog):
                 color=discord.Color.yellow().value
             )
         
-        # Send response as ephemeral message
-        await ctx.send(embed=embed, ephemeral=True)
+        # Send response appropriately for the context
+        await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="wordstats", description="View word usage statistics")
     @commands.has_permissions(manage_messages=True)
     async def word_stats(self, ctx, user: Optional[discord.Member] = None):
         """View word usage statistics for a user"""
         target_user = user or ctx.author
-        stats = self.db.get_user_word_stats(target_user.id)
+        stats = await self.db.run_async(
+            self.db.get_user_word_stats,
+            target_user.id
+        )
         
         if not stats:
-            await ctx.send(f"No tracked words found for {target_user.name}")
+            await send_hybrid_message(
+                ctx,
+                content=f"No tracked words found for {target_user.name}",
+                ephemeral=True
+            )
             return
 
         embed = create_embed(
@@ -108,16 +116,23 @@ class Moderation(commands.Cog):
                 inline=False
             )
 
-        await ctx.send(embed=embed, ephemeral=True)
+        await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="wordleaderboard", description="View word usage leaderboard")
     @commands.has_permissions(manage_messages=True)
     async def word_leaderboard(self, ctx, word: Optional[str] = None):
         """View leaderboard for word usage"""
-        leaderboard = self.db.get_word_leaderboard(word)
+        leaderboard = await self.db.run_async(
+            self.db.get_word_leaderboard,
+            word
+        )
         
         if not leaderboard:
-            await ctx.send("No word usage data found")
+            await send_hybrid_message(
+                ctx,
+                content="No word usage data found",
+                ephemeral=True
+            )
             return
 
         if word:
@@ -145,7 +160,7 @@ class Moderation(commands.Cog):
                 inline=False
             )
 
-        await ctx.send(embed=embed, ephemeral=True)
+        await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Moderation(bot))

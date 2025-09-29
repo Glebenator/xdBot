@@ -1,7 +1,7 @@
 # cogs/llm.py
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed
+from utils.helpers import create_embed, send_hybrid_message
 from utils.ollama_handler import OllamaHandler, ModelConfig
 import os
 from typing import Optional, List  # Added List import
@@ -249,6 +249,7 @@ class LLM(commands.Cog):
     async def clear_chat(self, ctx, model_type: Optional[str] = None):
         """Clear the conversation history"""
         message = None
+        responded = False
         try:
             if model_type:
                 if model_type not in self.model_configs:
@@ -302,7 +303,8 @@ class LLM(commands.Cog):
                     description="No chat history found.",
                     color=discord.Color.blue().value
                 )
-                message = await ctx.send(embed=embed)
+                await send_hybrid_message(ctx, embed=embed)
+                responded = True
                 return
 
             embed = create_embed(
@@ -320,7 +322,8 @@ class LLM(commands.Cog):
                     inline=False
                 )
 
-            message = await ctx.send(embed=embed, ephemeral=True)
+            await send_hybrid_message(ctx, embed=embed, ephemeral=True)
+            responded = True
 
         except Exception as e:
             logging.error(f"Error in show_history: {e}")
@@ -329,8 +332,8 @@ class LLM(commands.Cog):
                 description=f"Failed to show history: {str(e)}",
                 color=discord.Color.red().value
             )
-            if not message:
-                await ctx.send(embed=embed)
+            if not responded:
+                await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
     @commands.hybrid_command(
         name="model_stats",

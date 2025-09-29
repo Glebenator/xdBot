@@ -37,19 +37,21 @@ class Admin(commands.Cog):
     async def set_points(self, ctx, user: discord.Member, points: int):
         """Set a user's total success points"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO users (user_id, username, total_success)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    total_success = ?
-            ''', (user.id, user.name, points, points))
-            
-            conn.commit()
-            conn.close()
-            
+            def task():
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, total_success)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        total_success = ?
+                ''', (user.id, user.name, points, points))
+
+                conn.commit()
+                conn.close()
+
+            await self.db.run_async(task)
             await ctx.send(f"✅ Set {user.mention}'s success points to {points}")
         except Exception as e:
             await ctx.send(f"❌ Error setting points: {str(e)}")
@@ -62,19 +64,21 @@ class Admin(commands.Cog):
     async def add_points(self, ctx, user: discord.Member, points: int):
         """Add success points to a user"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO users (user_id, username, total_success)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    total_success = COALESCE(total_success, 0) + ?
-            ''', (user.id, user.name, points, points))
-            
-            conn.commit()
-            conn.close()
-            
+            def task():
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, total_success)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        total_success = COALESCE(total_success, 0) + ?
+                ''', (user.id, user.name, points, points))
+
+                conn.commit()
+                conn.close()
+
+            await self.db.run_async(task)
             await ctx.send(f"✅ Added {points} success points to {user.mention}")
         except Exception as e:
             await ctx.send(f"❌ Error adding points: {str(e)}")
@@ -87,34 +91,32 @@ class Admin(commands.Cog):
     async def remove_points(self, ctx, user: discord.Member, points: int):
         """Remove success points from a user"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Get current points
-            cursor.execute('''
-                SELECT total_success 
-                FROM users 
-                WHERE user_id = ?
-            ''', (user.id,))
-            
-            result = cursor.fetchone()
-            current_points = result['total_success'] if result else 0
-            
-            # Calculate new points (don't go below 0)
-            new_points = max(0, current_points - points)
-            
-            # Update points
-            cursor.execute('''
-                INSERT INTO users (user_id, username, total_success)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    total_success = ?
-            ''', (user.id, user.name, new_points, new_points))
-            
-            conn.commit()
-            conn.close()
-            
-            # Calculate actual points removed
+            def task():
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    SELECT total_success 
+                    FROM users 
+                    WHERE user_id = ?
+                ''', (user.id,))
+
+                result = cursor.fetchone()
+                current = result['total_success'] if result else 0
+                new_total = max(0, current - points)
+
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, total_success)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        total_success = ?
+                ''', (user.id, user.name, new_total, new_total))
+
+                conn.commit()
+                conn.close()
+                return current, new_total
+
+            current_points, new_points = await self.db.run_async(task)
             points_removed = current_points - new_points
             await ctx.send(f"✅ Removed {points_removed} success points from {user.mention}. New total: {new_points}")
             
@@ -130,20 +132,22 @@ class Admin(commands.Cog):
     async def set_streak(self, ctx, user: discord.Member, streak: int):
         """Set a user's success streak"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO users (user_id, username, success_streak)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    success_streak = ?
-            ''', (user.id, user.name, streak, streak))
-            
-            conn.commit()
-            await ctx.send(f"✅ Set {user.mention}'s streak to {streak}")
+            def task():
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
 
-            conn.close()
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, success_streak)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        success_streak = ?
+                ''', (user.id, user.name, streak, streak))
+
+                conn.commit()
+                conn.close()
+
+            await self.db.run_async(task)
+            await ctx.send(f"✅ Set {user.mention}'s streak to {streak}")
         except Exception as e:
             await ctx.send(f"❌ Error setting streak: {str(e)}")
 
@@ -155,25 +159,26 @@ class Admin(commands.Cog):
     async def reset_stats(self, ctx, user: discord.Member):
         """Reset all success-related stats for a user"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Reset all success-related fields
-            cursor.execute('''
-                UPDATE users
-                SET total_success = 0,
-                    success_streak = 0
-                WHERE user_id = ?
-            ''', (user.id,))
-            
-            # Clean up command usage history
-            cursor.execute('''
-                DELETE FROM command_usage
-                WHERE user_id = ? AND command_name = 'успех'
-            ''', (user.id,))
-            
-            conn.commit()
-            conn.close()
+            def task():
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    UPDATE users
+                    SET total_success = 0,
+                        success_streak = 0
+                    WHERE user_id = ?
+                ''', (user.id,))
+
+                cursor.execute('''
+                    DELETE FROM command_usage
+                    WHERE user_id = ? AND command_name = 'успех'
+                ''', (user.id,))
+
+                conn.commit()
+                conn.close()
+
+            await self.db.run_async(task)
             
             await ctx.send(f"✅ Reset all success stats for {user.mention}")
         except Exception as e:

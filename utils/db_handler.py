@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from typing import Optional, Dict, Any, List
 import os
+import asyncio
 
 class DatabaseHandler:
     def __init__(self, db_path: str = "data/bot.db"):
@@ -123,6 +124,10 @@ class DatabaseHandler:
             ''')
 
             conn.commit()
+
+    async def run_async(self, func, *args, **kwargs):
+        """Run a synchronous database function in a thread to avoid blocking the event loop."""
+        return await asyncio.to_thread(func, *args, **kwargs)
 
 
     def get_prompt(self, model_name: str) -> Optional[str]:
