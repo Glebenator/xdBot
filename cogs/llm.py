@@ -13,7 +13,7 @@ class LLM(commands.Cog):
         self.bot = bot
         
         # Initialize Ollama handler
-        ollama_url = os.getenv('OLLAMA_URL', 'http://ollama:11434')
+        ollama_url = os.getenv('OLLAMA_URL', 'http://192.168.50.69:11434')
         self.ollama = OllamaHandler(base_url=ollama_url)
         
         # Register models with specific configurations

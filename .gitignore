@@ -4,3 +4,5 @@ __pycache__/
 .dockerignore
 utils/systempromt.py
 GEMINI.md
+data/bad_words.json
+data/bot.db
