@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Voice support has been removed from the bot; suppress the optional PyNaCl warning.
+discord.VoiceClient.warn_nacl = False
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
