@@ -24,6 +24,12 @@ class Fun(commands.Cog):
         """Cleanup when cog is unloaded"""
         await self.rng.close()
 
+    @staticmethod
+    def _require_guild(ctx) -> int:
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage("This command can only be used in a server context.")
+        return ctx.guild.id
+
     async def process_success_roll(self, number: int) -> tuple[str, int]:
         """Process a success roll and return the message and success level"""
         if number < 5:
@@ -39,11 +45,10 @@ class Fun(commands.Cog):
         else:
             return "🌟 IS A MASSIVE SUCCESSFUL BUSINESSMAN", 6
 
-    async def handle_success_roll(self, ctx, interaction=None) -> tuple[str, int]:
+    async def handle_success_roll(self, ctx, guild_id: int, interaction=None) -> tuple[str, int]:
         """Handle the success roll logic"""
         try:
             number = await self.rng.randint(1, 100)
-            mention = ctx.author.mention    
             # Log the roll result
             logging.info(f"Success roll for {ctx.author.name}#{ctx.author.discriminator} (ID: {ctx.author.id}): {number}")
             
@@ -53,21 +58,20 @@ class Fun(commands.Cog):
             message = f"{user.mention} {message_part}"
             
             # Update database
-            await self.db.run_async(
-                self.db.log_command_usage,
+            await self.db.log_command_usage(
+                guild_id,
                 user.id,
                 "успех",
                 success_level=success_level
             )
-            await self.db.run_async(
-                self.db.update_total_success,
+            await self.db.add_total_success(
+                guild_id,
                 user.id,
                 success_level
             )
-            
-            # Update streak and get streak info
-            streak_info = await self.db.run_async(
-                self.db.update_success_streak,
+
+            streak_info = await self.db.update_success_streak(
+                guild_id,
                 user.id
             )
             
@@ -85,16 +89,17 @@ class Fun(commands.Cog):
     async def success(self, ctx):
         """Check your daily success level"""
         await ctx.defer()
-        
+
+        guild_id = self._require_guild(ctx)
         user_id = ctx.author.id
         current_time = datetime.now()
-        
+
         # Update user record
-        await self.db.run_async(self.db.update_user, user_id, ctx.author.name)
-        
+        await self.db.update_user(guild_id, user_id, ctx.author.name)
+
         # Check cooldown
-        last_used = await self.db.run_async(
-            self.db.get_command_cooldown,
+        last_used = await self.db.get_command_cooldown(
+            guild_id,
             user_id,
             "успех"
         )
@@ -115,17 +120,16 @@ class Fun(commands.Cog):
 
         try:
             # Record exact execution time
-            execution_time = await self.db.run_async(
-                self.db.record_command_execution,
+            await self.db.record_command_execution(
+                guild_id,
                 user_id,
                 "успех"
             )
-            
-            message, success_level = await self.handle_success_roll(ctx)
-            
-            # Update cooldown
-            await self.db.run_async(
-                self.db.update_command_cooldown,
+
+            message, success_level = await self.handle_success_roll(ctx, guild_id)
+
+            await self.db.update_command_cooldown(
+                guild_id,
                 user_id,
                 "успех"
             )
@@ -140,9 +144,8 @@ class Fun(commands.Cog):
 )
     async def success_leaderboard(self, ctx):
         """View the успех command leaderboard"""
-        leaderboard_data = await self.db.run_async(
-            self.db.get_success_leaderboard
-        )
+        guild_id = self._require_guild(ctx)
+        leaderboard_data = await self.db.get_success_leaderboard(guild_id)
         
         if not leaderboard_data:
             await ctx.send("No успех data available yet!")
@@ -223,10 +226,8 @@ class Fun(commands.Cog):
     )
     async def success_stats(self, ctx):
         """View detailed success statistics"""
-        stats = await self.db.run_async(
-            self.db.get_success_stats,
-            ctx.author.id
-        )
+        guild_id = self._require_guild(ctx)
+        stats = await self.db.get_success_stats(guild_id, ctx.author.id)
         
         embed = create_embed(
             title=f"Success Stats for {ctx.author.name}",
@@ -279,16 +280,18 @@ class Fun(commands.Cog):
         await ctx.defer()  # Acknowledge command while we wait for Random.org
         
         # Update database
-        await self.db.run_async(
-            self.db.update_user,
+        guild_id = self._require_guild(ctx)
+
+        await self.db.update_user(
+            guild_id,
             ctx.author.id,
             ctx.author.name
         )
         
         try:
             number = await self.rng.randint(1, max_num)
-            await self.db.run_async(
-                self.db.log_command_usage,
+            await self.db.log_command_usage(
+                guild_id,
                 ctx.author.id,
                 "roll",
                 roll_value=number

@@ -13,10 +13,19 @@ class Moderation(commands.Cog):
         self.db = DatabaseHandler()
         self.word_filter = WordFilter()
 
+    @staticmethod
+    def _require_guild(ctx) -> int:
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage("This command can only be used in a server context.")
+        return ctx.guild.id
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Monitor messages for tracked words"""
         if message.author.bot:
+            return
+
+        if message.guild is None:
             return
 
         # Check message for tracked words
@@ -25,10 +34,12 @@ class Moderation(commands.Cog):
         if found_words:
             # Update database for each found word
             for word in found_words:
-                await self.db.run_async(
-                    self.db.log_word_usage,
+                await self.db.log_word_usage(
+                    message.guild.id,
                     message.author.id,
-                    word
+                    word,
+                    message_id=message.id,
+                    channel_id=message.channel.id
                 )
 
     @commands.hybrid_command(name="addword", description="Add a word to track")
@@ -87,9 +98,10 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def word_stats(self, ctx, user: Optional[discord.Member] = None):
         """View word usage statistics for a user"""
+        guild_id = self._require_guild(ctx)
         target_user = user or ctx.author
-        stats = await self.db.run_async(
-            self.db.get_user_word_stats,
+        stats = await self.db.get_user_word_stats(
+            guild_id,
             target_user.id
         )
         
@@ -122,8 +134,9 @@ class Moderation(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     async def word_leaderboard(self, ctx, word: Optional[str] = None):
         """View leaderboard for word usage"""
-        leaderboard = await self.db.run_async(
-            self.db.get_word_leaderboard,
+        guild_id = self._require_guild(ctx)
+        leaderboard = await self.db.get_word_leaderboard(
+            guild_id,
             word
         )
         
