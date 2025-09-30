@@ -84,11 +84,20 @@ class ImageProcessing(commands.Cog):
         """
         Detect eyes in an attached image and apply demonic effects
         """
-        if not ctx.message.attachments:
+        interaction = getattr(ctx, "interaction", None)
+        attachments = []
+        if interaction:
+            attachments = list(getattr(interaction, "attachments", []) or [])
+
+        message = getattr(ctx, "message", None)
+        if not attachments and message is not None:
+            attachments = list(message.attachments or [])
+
+        if not attachments:
             await ctx.send("Please attach an image!")
             return
 
-        attachment = ctx.message.attachments[0]
+        attachment = attachments[0]
         
         # Check if the attachment is an image
         if not any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):

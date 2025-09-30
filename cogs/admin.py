@@ -1,9 +1,14 @@
 # cogs/admin.py
+import logging
+
 import discord
 from discord.ext import commands
 from utils.db_handler import get_database_handler
 from utils.helpers import defer_hybrid
 import config
+
+
+logger = logging.getLogger(__name__)
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -84,7 +89,7 @@ class Admin(commands.Cog):
             await ctx.send(f"✅ Removed {points_removed} success points from {user.mention}. New total: {new_points}")
             
         except Exception as e:
-            print(f"Error in remove_points: {str(e)}")
+            logger.exception("Error in remove_points command", extra={"user_id": user.id, "guild_id": ctx.guild.id if ctx.guild else None})
             await ctx.send(f"❌ Error removing points: {str(e)}")
 
     @commands.hybrid_command(

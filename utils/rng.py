@@ -5,6 +5,9 @@ import secrets  # Fallback for errors
 from typing import Optional, List
 import logging
 
+
+logger = logging.getLogger(__name__)
+
 class RandomOrgRNG:
     def __init__(self, api_key: Optional[str]):
         self.api_key = api_key
@@ -39,13 +42,19 @@ class RandomOrgRNG:
         try:
             async with session.post(self.base_url, json=payload) as response:
                 if response.status != 200:
-                    raise Exception(f"API returned status {response.status}")
+                    body = await response.text()
+                    raise RuntimeError(
+                        f"Random.org returned {response.status}: {body[:200]}"
+                    )
                 data = await response.json()
                 if "error" in data:
-                    raise Exception(f"API error: {data['error']}")
+                    raise RuntimeError(f"Random.org error: {data['error']}")
                 return data["result"]
-        except Exception as e:
-            logging.error(f"Random.org API error: {e}")
+        except Exception as exc:
+            logger.warning(
+                "Random.org request failed", exc_info=True,
+                extra={"method": method, "params": {k: params[k] for k in params if k != 'apiKey'}}
+            )
             return None
 
     async def _get_integers(self, n: int, min_val: int, max_val: int) -> Optional[List[int]]:
@@ -72,12 +81,17 @@ class RandomOrgRNG:
             numbers = await self._get_integers(1, min_val, max_val)
             if numbers:
                 return numbers[0]
-        except Exception as e:
-            logging.error(f"Failed to get random number from Random.org: {e}")
+        except Exception:
+            logger.exception("Unexpected error retrieving integers from Random.org")
         
         # Fallback to secrets module if Random.org fails
         range_size = max_val - min_val + 1
-        return min_val + secrets.randbelow(range_size)
+        value = min_val + secrets.randbelow(range_size)
+        logger.debug(
+            "Using local randomness fallback",
+            extra={"min": min_val, "max": max_val, "value": value}
+        )
+        return value
 
     async def close(self):
         """Close the aiohttp session"""

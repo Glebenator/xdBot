@@ -8,6 +8,9 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+
+logger = logging.getLogger(__name__)
+
 @dataclass
 class RequestMetrics:
     """Class for tracking request metrics"""
@@ -186,7 +189,7 @@ class OllamaHandler:
                     if response.status != 200:
                         response_text = await response.text()
                         error_msg = f"API returned status {response.status}. Details: {response_text}"
-                        logging.error(f"Ollama API error: {error_msg}")
+                        logger.error("Ollama API error: %s", error_msg)
                         if attempt < max_retries - 1:
                             await asyncio.sleep(retry_delay * (2 ** attempt))
                             continue
@@ -217,12 +220,20 @@ class OllamaHandler:
                         return generated_text
                     
                     error_msg = f"Unexpected API response format: {str(result)}"
+                    logger.warning(
+                        "Unexpected Ollama response format",
+                        extra={"model": model, "user_id": user_id, "response_keys": list(result.keys())}
+                    )
                     metrics.complete(False, error_msg)
                     self.metrics.append(metrics)
                     return f"Error: {error_msg}"
                     
             except asyncio.TimeoutError:
                 error_msg = f"Request timed out after {model_config.timeout} seconds"
+                logger.warning(
+                    "Ollama request timed out",
+                    extra={"model": model, "user_id": user_id, "timeout": model_config.timeout, "attempt": attempt + 1}
+                )
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2 ** attempt))
                     continue
@@ -234,6 +245,11 @@ class OllamaHandler:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2 ** attempt))
                     continue
+                logger.error(
+                    "Ollama request failed after retries",
+                    exc_info=True,
+                    extra={"model": model, "user_id": user_id, "message_preview": message[:100]}
+                )
                 metrics.complete(False, error_msg)
                 self.metrics.append(metrics)
                 return f"Error: {error_msg}"

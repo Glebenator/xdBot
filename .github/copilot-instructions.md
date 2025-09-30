@@ -1,14 +1,16 @@
 # Copilot Instructions for xdBot
 
 ## Architecture snapshot
-- Entry point `main.py` constructs `DiscordBot`, configures intents, and autodiscovers every module under `cogs/` via `load_extensions`; add new features as `cogs/<name>.py` with an `async def setup(bot)`.
+- Entry point `main.py` constructs `DiscordBot`, configures intents, and autodiscovers every module under `cogs/` via `load_extensions`; add new features as `cogs/<name>.py` with an `async def setup(bot)` (modules without a `setup` coroutine are skipped).
 - Runtime configuration lives in `config.settings`; always read tokens, prefixes, and URLs from there instead of `os.environ`.
-- Persistence goes through `utils/db_handler.py` (`DatabaseHandler`) which bootstraps and migrates the SQLite schema in `data/bot.db` with guild-aware keys.
+- Persistence goes through `utils/db_handler.py`; grab the shared instance through `get_database_handler()` so schema bootstrapping and migrations in `data/bot.db` stay centralised.
 
 ## Command patterns
-- Commands are predominantly `@commands.hybrid_command`, enabling both prefix and slash usage—follow the examples in `cogs/fun.py` or `cogs/moderation.py` and call `await ctx.defer()` when the handler can take time (Random.org, image processing, LLM calls).
+- Commands are predominantly `@commands.hybrid_command`, enabling both prefix and slash usage—follow the examples in `cogs/fun.py` or `cogs/moderation.py` and call `await defer_hybrid(ctx, ...)` (from `utils.helpers`) when the handler can take time or should be ephemeral, instead of touching `ctx.defer()` directly.
 - Reuse `utils.helpers.send_hybrid_message` for responses that should be ephemeral when invoked as slash commands and `create_embed` for consistent embed styling.
 - Owner/admin checks rely on decorators (`@commands.is_owner`, `@commands.has_permissions`) and the helper `_require_guild(ctx)` to guard DM contexts; match that pattern when adding privileged commands.
+- When commands rely on uploaded files, read attachments from both `ctx.interaction.attachments` and `ctx.message.attachments` so hybrid usage works in either mode.
+- For long-running background work (LLM calls, heavy processing) follow the task pattern in `cogs/llm.py` to avoid blocking listeners.
 
 ## Persistence & cooldown conventions
 - Before recording stats, call `DatabaseHandler.update_user(guild_id, user_id, display_name)` so usernames stay current.
@@ -24,6 +26,7 @@
 - Local run: create a virtualenv, `pip install -r requirements.txt`, set secrets in `.env`, then launch with `python main.py`; Docker users can run `docker-compose up --build` which mirrors that setup.
 - Use `python -m compileall .` for fast syntax validation and the owner-only in-chat commands `!reload <cog>` / `!sync` (see `cogs/admin.py`) to iterate without restarting the bot.
 - Slash-command registration happens in `DiscordBot.setup_hook` via `self.tree.sync()`, so expect a sync on startup; manual resync is rarely needed unless commands were added or permissions changed.
+- Adopt the shared logging approach: `main.py` configures structured output, so new modules should declare `logger = logging.getLogger(__name__)` and avoid `print` in favour of structured log calls with useful context.
 
 ## Data & housekeeping
 - Persisted files live in `data/` (`bot.db`, `bad_words.json`, `replies.json`); treat them as runtime state and avoid hardcoding absolute paths when extending functionality.

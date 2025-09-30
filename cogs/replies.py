@@ -3,8 +3,12 @@ import discord
 from discord.ext import commands
 from typing import Dict, List, Union, Tuple
 import json
+import logging
 import os
 from utils.helpers import create_embed, defer_hybrid
+
+logger = logging.getLogger(__name__)
+
 
 class Replies(commands.Cog):
     def __init__(self, bot):
@@ -20,8 +24,9 @@ class Replies(commands.Cog):
             if os.path.exists('data/replies.json'):
                 with open('data/replies.json', 'r') as f:
                     self.replies.update(json.load(f))
-        except Exception as e:
-            print(f"Error loading replies: {e}")
+                logger.info("Loaded %d reply triggers", len(self.replies))
+        except Exception:
+            logger.exception("Failed to load replies from data/replies.json")
 
     def save_replies(self) -> None:
         """Save custom replies to JSON file"""
@@ -29,8 +34,8 @@ class Replies(commands.Cog):
             os.makedirs('data', exist_ok=True)
             with open('data/replies.json', 'w') as f:
                 json.dump(self.replies, f, indent=4)
-        except Exception as e:
-            print(f"Error saving replies: {e}")
+        except Exception:
+            logger.exception("Failed to save replies to data/replies.json")
         
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:

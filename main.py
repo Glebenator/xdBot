@@ -13,7 +13,11 @@ import config
 # Voice support has been removed from the bot; suppress the optional PyNaCl warning.
 discord.VoiceClient.warn_nacl = False
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 class DiscordBot(commands.Bot):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -7,6 +8,9 @@ from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 
 import aiosqlite
+
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseHandler:
@@ -21,6 +25,7 @@ class DatabaseHandler:
     # Schema initialisation & migration helpers
     # ------------------------------------------------------------------
     def init_database(self) -> None:
+        logger.info("Initialising database", extra={"db_path": self.db_path})
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -340,12 +345,14 @@ class DatabaseHandler:
     # ------------------------------------------------------------------
     @asynccontextmanager
     async def _connect(self) -> AsyncIterator[aiosqlite.Connection]:
+        logger.debug("Opening database connection", extra={"db_path": self.db_path})
         conn = await aiosqlite.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
             yield conn
         finally:
             await conn.close()
+            logger.debug("Closed database connection", extra={"db_path": self.db_path})
 
     # ------------------------------------------------------------------
     # Prompt management

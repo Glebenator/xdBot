@@ -1,7 +1,11 @@
 # utils/word_filter.py
 import json
+import logging
 import os
 from typing import Set, Dict, List
+
+
+logger = logging.getLogger(__name__)
 
 class WordFilter:
     def __init__(self, filter_file: str = "data/bad_words.json"):
@@ -16,21 +20,23 @@ class WordFilter:
                 with open(self.filter_file, 'r', encoding='utf-8') as f:
                     self.bad_words = set(json.load(f))
             else:
-                # Initialize with a default set of words
-                self.bad_words = {"badword1", "badword2"}  # Replace with actual words
+                self.bad_words = set()
+                logger.info("Initialising empty word filter at %s", self.filter_file)
                 self.save_words()
-        except Exception as e:
-            print(f"Error loading word filter: {e}")
+        except Exception:
+            logger.exception("Failed to load word filter from %s", self.filter_file)
             self.bad_words = set()
 
     def save_words(self) -> None:
         """Save bad words to JSON file"""
         try:
-            os.makedirs(os.path.dirname(self.filter_file), exist_ok=True)
+            dirpath = os.path.dirname(self.filter_file)
+            if dirpath:
+                os.makedirs(dirpath, exist_ok=True)
             with open(self.filter_file, 'w', encoding='utf-8') as f:
-                json.dump(list(self.bad_words), f, indent=4)
-        except Exception as e:
-            print(f"Error saving word filter: {e}")
+                json.dump(sorted(self.bad_words), f, indent=4)
+        except Exception:
+            logger.exception("Failed to save word filter to %s", self.filter_file)
 
     def add_word(self, word: str) -> bool:
         """Add a new word to the filter"""
