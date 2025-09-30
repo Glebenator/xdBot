@@ -23,6 +23,8 @@ DEFAULT_PREFIX = "!"
 DEFAULT_OWNER_IDS: List[int] = []
 DEFAULT_GUILD_ID: Optional[int] = None
 DEFAULT_OLLAMA_URL = "http://192.168.50.69:11434"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OPENROUTER_APP_NAME = "xdBot"
 
 
 def _parse_int(value: Optional[str]) -> Optional[int]:
@@ -59,6 +61,11 @@ class Settings:
 	discord_token: Optional[str] = None
 	random_org_api_key: Optional[str] = None
 	ollama_url: str = DEFAULT_OLLAMA_URL
+	openrouter_api_key: Optional[str] = None
+	openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
+	openrouter_site_url: Optional[str] = None
+	openrouter_app_name: str = DEFAULT_OPENROUTER_APP_NAME
+	openrouter_default_model: Optional[str] = None
 
 	@property
 	def random_org_enabled(self) -> bool:
@@ -67,6 +74,10 @@ class Settings:
 	@property
 	def has_discord_token(self) -> bool:
 		return bool(self.discord_token)
+
+	@property
+	def openrouter_enabled(self) -> bool:
+		return bool(self.openrouter_api_key)
 
 
 def _load_settings() -> Settings:
@@ -85,6 +96,11 @@ def _load_settings() -> Settings:
 	discord_token = os.getenv("DISCORD_TOKEN")
 	random_org_api_key = os.getenv("RANDOM_ORG_KEY")
 	ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
+	openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+	openrouter_base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
+	openrouter_site_url = os.getenv("OPENROUTER_SITE_URL") or None
+	openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", DEFAULT_OPENROUTER_APP_NAME)
+	openrouter_default_model = os.getenv("OPENROUTER_DEFAULT_MODEL") or None
 
 	return Settings(
 		prefix=prefix,
@@ -93,6 +109,11 @@ def _load_settings() -> Settings:
 		discord_token=discord_token,
 		random_org_api_key=random_org_api_key,
 		ollama_url=ollama_url,
+		openrouter_api_key=openrouter_api_key,
+		openrouter_base_url=openrouter_base_url,
+		openrouter_site_url=openrouter_site_url,
+		openrouter_app_name=openrouter_app_name,
+		openrouter_default_model=openrouter_default_model,
 	)
 
 

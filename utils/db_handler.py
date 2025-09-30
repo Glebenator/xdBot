@@ -39,6 +39,7 @@ class DatabaseHandler:
             self._ensure_word_stats_table(cursor)
             self._ensure_prompts_table(cursor)
             self._ensure_command_executions_table(cursor)
+            self._ensure_llm_settings_table(cursor)
             self._ensure_indexes(cursor)
 
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -324,6 +325,18 @@ class DatabaseHandler:
                 "command_name": "command_name",
                 "execution_time": "execution_time",
             },
+        )
+
+    def _ensure_llm_settings_table(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS llm_settings (
+                guild_id INTEGER PRIMARY KEY,
+                model_key TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by_user_id INTEGER
+            )
+            """
         )
 
     def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
@@ -860,6 +873,43 @@ class DatabaseHandler:
                 if row and row["execution_time"]:
                     return datetime.fromisoformat(row["execution_time"])
                 return None
+
+    # ------------------------------------------------------------------
+    # LLM settings helpers
+    # ------------------------------------------------------------------
+    async def set_llm_active_model(
+        self,
+        guild_id: int,
+        model_key: str,
+        *,
+        updated_by_user_id: Optional[int] = None,
+    ) -> None:
+        async with self._connect() as conn:
+            await conn.execute(
+                """
+                INSERT INTO llm_settings (guild_id, model_key, updated_at, updated_by_user_id)
+                VALUES (?, ?, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    model_key = excluded.model_key,
+                    updated_at = excluded.updated_at,
+                    updated_by_user_id = excluded.updated_by_user_id
+                """,
+                (guild_id, model_key, updated_by_user_id),
+            )
+            await conn.commit()
+
+    async def get_llm_settings(self, guild_id: int) -> Optional[Dict[str, Any]]:
+        async with self._connect() as conn:
+            async with conn.execute(
+                """
+                SELECT model_key, updated_at, updated_by_user_id
+                FROM llm_settings
+                WHERE guild_id = ?
+                """,
+                (guild_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
 
 
 _shared_db_handler: Optional[DatabaseHandler] = None

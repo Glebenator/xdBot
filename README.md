@@ -7,7 +7,7 @@ A modular Discord bot built on top of `discord.py` featuring asynchronous data s
 - Fully async persistence layer backed by `aiosqlite` with multi-guild awareness
 - Hybrid (prefix + slash) commands with automatic ephemeral handling
 - Configurable Random.org integration with secure local fallback
-- Optional Ollama-powered LLM responses with chat history management
+- Optional Ollama or OpenRouter-powered LLM responses with chat history management
 - Modular cog structure for admin, moderation, fun, image, and voice features
 
 ## 📦 Requirements
@@ -16,7 +16,8 @@ A modular Discord bot built on top of `discord.py` featuring asynchronous data s
 - Dependencies listed in `requirements.txt`
 - Discord bot token with the necessary intents
 - (Optional) Random.org API key for true randomness
-- (Optional) Ollama endpoint for LLM features
+- (Optional) Ollama endpoint for local LLM features
+- (Optional) OpenRouter API key for hosted LLM access
 
 ## ⚙️ Configuration
 
@@ -29,12 +30,20 @@ OWNER_IDS=123456789012345678,987654321098765432
 GUILD_ID=123456789012345678
 RANDOM_ORG_KEY=your_random_org_key_optional
 OLLAMA_URL=http://localhost:11434
+OPENROUTER_API_KEY=your_openrouter_key_optional
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=https://your.site (needed only if OpenRouter requires a referrer)
+OPENROUTER_APP_NAME=xdBot
+OPENROUTER_DEFAULT_MODEL=anthropic/claude-3-haiku (optional preset)
 ```
 
 - `BOT_PREFIX` defaults to `!`.
 - `OWNER_IDS` accepts a comma-separated list of user IDs.
 - `RANDOM_ORG_KEY` is optional; when omitted, the bot falls back to secure local randomness and lets users know.
 - `OLLAMA_URL` default is `http://192.168.50.69:11434` but can be overridden.
+- `OPENROUTER_API_KEY` enables hosted models. When omitted, OpenRouter-backed configs are ignored.
+- `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are forwarded to OpenRouter headers for attribution.
+- `OPENROUTER_DEFAULT_MODEL` lets the LLM cog auto-register an OpenRouter chat model without manual edits.
 
 All values are accessible through `config.settings` for consistent use across the code base.
 
@@ -57,7 +66,7 @@ If `.env.example` is not available, create a `.env` file manually and use the co
 - `admin`: owner/admin utilities for streaks, points, and cog management
 - `fun`: Random.org rolls, success streak tracking, and leaderboards
 - `moderation`: bad-word tracking, stats, and leaderboards
-- `llm`: chat and mention responses via Ollama models
+- `llm`: chat and mention responses via configurable Ollama/OpenRouter models with conversation tracking; includes admin utilities `/llm_set_model` and `/llm_current_model` to manage the active chat provider
 - `image`, `general`, `voice`: assorted utility features (see code for details)
 
 ## 🛡️ Data Layer
