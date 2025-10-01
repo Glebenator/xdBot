@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import json
 import logging
 import time
 from collections import deque
@@ -129,6 +130,7 @@ class LLMHandler:
         openrouter_site_url: Optional[str] = None,
         openrouter_app_name: Optional[str] = None,
         metrics_retention_minutes: int = 1440,
+        tavily_api_key: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.max_context_messages = max_context_messages
@@ -138,6 +140,7 @@ class LLMHandler:
         self.openrouter_site_url = openrouter_site_url
         self.openrouter_app_name = openrouter_app_name
         self.metrics_retention_minutes = metrics_retention_minutes
+        self.tavily_api_key = tavily_api_key
 
         self.conversation_history: Dict[int, Dict[str, deque[Message]]] = {}
         self.model_configs: Dict[str, ModelConfig] = {}
@@ -145,6 +148,12 @@ class LLMHandler:
         self._session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
         self._last_cleanup = datetime.now()
+        
+        # Initialize search tool if API key is available
+        self._search_tool: Optional[Any] = None
+        if tavily_api_key:
+            from utils.search_tool import TavilySearchTool
+            self._search_tool = TavilySearchTool(api_key=tavily_api_key)
 
     def register_model(self, key: str, config: ModelConfig) -> None:
         """Register or replace a model configuration under a logical key."""
@@ -171,6 +180,9 @@ class LLMHandler:
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+        
+        if self._search_tool:
+            await self._search_tool.close()
 
     def add_to_history(
         self,
@@ -266,15 +278,25 @@ class LLMHandler:
         *,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Any = None,
+        max_tool_iterations: int = 3,
     ) -> LLMResponse:
-        """Generate a response using the configured provider with retry logic."""
+        """Generate a response using the configured provider with retry logic and tool support."""
 
         self.cleanup_old_conversations()
 
         model_config = self.model_configs.get(model_key)
         if model_config is None:
             raise LLMRequestError(f"Unknown model key: {model_key}", retryable=False)
+        
+        # Prepare tools - use provided tools or get from config, and add search tool if available
         tools_payload = tools if tools is not None else model_config.tools
+        if tools_payload is None and self._search_tool:
+            # Default to search tool if available and no other tools specified
+            if model_config.provider is ProviderType.OLLAMA:
+                tools_payload = [self._search_tool.get_ollama_tool_definition()]
+            else:
+                tools_payload = [self._search_tool.get_tool_definition()]
+        
         tool_choice_payload = tool_choice if tool_choice is not None else model_config.tool_choice
 
         metrics = RequestMetrics(
@@ -290,6 +312,10 @@ class LLMHandler:
         history_messages = self._get_history_messages(user_id, model_key)
         request_messages = [msg.to_dict() for msg in history_messages]
         request_messages.append({"role": "user", "content": message})
+        
+        # Track the original user message
+        original_user_message = message
+        tool_iterations = 0
 
         for attempt in range(max_retries):
             try:
@@ -304,7 +330,65 @@ class LLMHandler:
                 if not response.content and not response.tool_calls:
                     raise LLMRequestError("Model returned an empty response", retryable=False)
 
-                self.add_to_history(user_id, model_key, role="user", content=message)
+                # Handle tool calls if present
+                if response.tool_calls and tool_iterations < max_tool_iterations:
+                    tool_iterations += 1
+                    logger.info(
+                        "Model requested tool calls",
+                        extra={
+                            "model_key": model_key,
+                            "provider": model_config.provider.value,
+                            "tool_calls_count": len(response.tool_calls),
+                            "iteration": tool_iterations,
+                            "max_iterations": max_tool_iterations,
+                        },
+                    )
+                    logger.debug(f"Tool calls details: {json.dumps(response.tool_calls, indent=2)}")
+                    
+                    # Add assistant's response with tool calls to messages
+                    request_messages.append({
+                        "role": "assistant",
+                        "content": response.content,
+                        "tool_calls": response.tool_calls,
+                    })
+                    
+                    # Execute each tool call
+                    for idx, tool_call in enumerate(response.tool_calls, 1):
+                        logger.info(
+                            f"Executing tool call {idx}/{len(response.tool_calls)}",
+                            extra={
+                                "tool_call_id": tool_call.get("id"),
+                                "function_name": tool_call.get("function", {}).get("name"),
+                            },
+                        )
+                        tool_result = await self._execute_tool_call(tool_call)
+                        logger.debug(f"Tool call {idx} result preview: {tool_result[:200]}...")
+                        
+                        request_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id"),
+                            "name": tool_call.get("function", {}).get("name"),
+                            "content": tool_result,
+                        })
+                    
+                    # Make another request with tool results
+                    logger.info(
+                        "Sending tool results back to model",
+                        extra={
+                            "model_key": model_key,
+                            "message_count": len(request_messages),
+                        },
+                    )
+                    response = await self._dispatch_request(
+                        model_key,
+                        model_config,
+                        request_messages,
+                        tools_payload,
+                        tool_choice_payload,
+                    )
+
+                # Save to history
+                self.add_to_history(user_id, model_key, role="user", content=original_user_message)
                 self.add_to_history(
                     user_id,
                     model_key,
@@ -400,6 +484,97 @@ class LLMHandler:
             error="Error: Unexpected provider state",
         )
 
+    async def _execute_tool_call(self, tool_call: Dict[str, Any]) -> str:
+        """Execute a tool call and return the result as a string."""
+        try:
+            function_name = tool_call.get("function", {}).get("name")
+            arguments_str = tool_call.get("function", {}).get("arguments", "{}")
+            tool_call_id = tool_call.get("id", "unknown")
+            
+            logger.info(
+                "Executing tool call",
+                extra={
+                    "tool_call_id": tool_call_id,
+                    "function_name": function_name,
+                    "arguments_raw": arguments_str,
+                },
+            )
+            
+            # Parse arguments
+            try:
+                if isinstance(arguments_str, str):
+                    arguments = json.loads(arguments_str)
+                else:
+                    arguments = arguments_str
+                logger.debug(f"Tool call parsed arguments: {arguments}")
+            except json.JSONDecodeError as exc:
+                logger.error(
+                    "Failed to parse tool arguments",
+                    extra={
+                        "function_name": function_name,
+                        "arguments_str": arguments_str,
+                        "error": str(exc),
+                    },
+                    exc_info=True,
+                )
+                return f"Error: Invalid tool arguments format - {exc}"
+            
+            # Execute the appropriate tool
+            if function_name == "tavily_search":
+                if not self._search_tool:
+                    logger.warning("Search tool requested but Tavily API key not configured")
+                    return "Error: Search tool is not available (Tavily API key not configured)"
+                
+                query = arguments.get("query", "")
+                max_results = arguments.get("max_results", 5)
+                search_depth = arguments.get("search_depth", "basic")
+                topic = arguments.get("topic", "general")
+                
+                logger.info(
+                    "Executing Tavily search",
+                    extra={
+                        "query": query,
+                        "max_results": max_results,
+                        "search_depth": search_depth,
+                        "topic": topic,
+                    },
+                )
+                
+                search_results = await self._search_tool.search(
+                    query=query,
+                    max_results=max_results,
+                    search_depth=search_depth,
+                    topic=topic,
+                    include_answer=True,
+                )
+                
+                formatted_results = self._search_tool.format_search_results(search_results)
+                logger.info(
+                    "Search completed",
+                    extra={
+                        "query": query,
+                        "results_count": len(search_results.get("results", [])),
+                        "formatted_length": len(formatted_results),
+                    },
+                )
+                logger.debug(f"Formatted search results for LLM: {formatted_results[:500]}...")
+                
+                return formatted_results
+            else:
+                logger.warning(f"Unknown tool function requested: {function_name}")
+                return f"Error: Unknown tool function: {function_name}"
+                
+        except Exception as exc:
+            logger.error(
+                "Error executing tool call",
+                extra={
+                    "tool_call": tool_call,
+                    "error": str(exc),
+                },
+                exc_info=True,
+            )
+            return f"Error executing tool: {type(exc).__name__}: {exc}"
+
     def _record_metrics(self, metrics: RequestMetrics) -> None:
         """Store metrics while trimming entries beyond the retention window."""
 
@@ -418,7 +593,7 @@ class LLMHandler:
         tool_choice: Any,
     ) -> LLMResponse:
         if config.provider is ProviderType.OLLAMA:
-            return await self._generate_with_ollama(model_key, config, messages)
+            return await self._generate_with_ollama(model_key, config, messages, tools)
         if config.provider is ProviderType.OPENROUTER:
             return await self._generate_with_openrouter(model_key, config, messages, tools, tool_choice)
         raise LLMRequestError(f"Unsupported provider: {config.provider}")
@@ -444,54 +619,181 @@ class LLMHandler:
         model_key: str,
         config: ModelConfig,
         messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
-        prompt = self._format_ollama_prompt(messages)
         session = await self.get_session()
+        
+        # Ollama supports tools in the /api/chat endpoint
+        if tools:
+            # Use chat endpoint for tool support
+            payload = {
+                "model": config.model_name,
+                "messages": messages,
+                "stream": False,
+                "tools": tools,
+                "options": {
+                    "temperature": config.temperature,
+                    "top_p": config.top_p,
+                    "num_predict": config.num_predict,
+                    "stop": config.stop_sequences,
+                    **config.options,
+                },
+            }
+            
+            endpoint = f"{self.base_url}/api/chat"
+            
+            logger.info(
+                "Ollama API Request (chat with tools)",
+                extra={
+                    "endpoint": endpoint,
+                    "model": config.model_name,
+                    "message_count": len(messages),
+                    "tools_count": len(tools),
+                    "temperature": config.temperature,
+                },
+            )
+            logger.debug(f"Ollama chat request payload: {json.dumps(payload, indent=2)}")
+            
+            timeout = aiohttp.ClientTimeout(total=config.timeout)
+            async with session.post(
+                endpoint,
+                json=payload,
+                timeout=timeout,
+            ) as response:
+                response_status = response.status
+                
+                if response.status != 200:
+                    response_text = await response.text()
+                    logger.error(
+                        "Ollama API error",
+                        extra={
+                            "endpoint": endpoint,
+                            "status": response.status,
+                            "model": config.model_name,
+                            "error": response_text,
+                        },
+                    )
+                    retryable = response.status >= 500
+                    raise LLMRequestError(
+                        f"API returned status {response.status}. Details: {response_text}",
+                        retryable=retryable,
+                    )
 
-        payload = {
-            "model": config.model_name,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "num_predict": config.num_predict,
-                "stop": config.stop_sequences,
-                **config.options,
-            },
-        }
+                result = await response.json()
+                logger.debug(f"Ollama chat raw response: {json.dumps(result, indent=2)}")
+                
+                message_data = result.get("message", {})
+                generated_text = (message_data.get("content") or "").strip()
+                tool_calls = message_data.get("tool_calls")
 
-        timeout = aiohttp.ClientTimeout(total=config.timeout)
-        async with session.post(
-            f"{self.base_url}/api/generate",
-            json=payload,
-            timeout=timeout,
-        ) as response:
-            if response.status != 200:
-                response_text = await response.text()
-                retryable = response.status >= 500
-                raise LLMRequestError(
-                    f"API returned status {response.status}. Details: {response_text}",
-                    retryable=retryable,
+                logger.info(
+                    "Ollama API Response",
+                    extra={
+                        "status": response_status,
+                        "model": config.model_name,
+                        "content_length": len(generated_text),
+                        "has_tool_calls": bool(tool_calls),
+                        "tool_calls_count": len(tool_calls) if tool_calls else 0,
+                    },
                 )
 
-            result = await response.json()
-            generated_text = result.get("response", "")
-            generated_text = (generated_text or "").strip()
+                if len(generated_text) > 4000:
+                    generated_text = generated_text[:4000] + "... [truncated due to length]"
 
-            if len(generated_text) > 4000:
-                generated_text = generated_text[:4000] + "... [truncated due to length]"
+                tokens_generated = len(generated_text.split())
 
-            tokens_generated = len(generated_text.split())
+                return LLMResponse(
+                    model_key=model_key,
+                    provider_model=config.model_name,
+                    provider=config.provider,
+                    content=generated_text,
+                    tool_calls=tool_calls,
+                    raw=result,
+                    tokens_generated=tokens_generated,
+                )
+        else:
+            # Use generate endpoint for simple text completion (backward compatibility)
+            prompt = self._format_ollama_prompt(messages)
+            
+            payload = {
+                "model": config.model_name,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": config.temperature,
+                    "top_p": config.top_p,
+                    "num_predict": config.num_predict,
+                    "stop": config.stop_sequences,
+                    **config.options,
+                },
+            }
 
-            return LLMResponse(
-                model_key=model_key,
-                provider_model=config.model_name,
-                provider=config.provider,
-                content=generated_text,
-                raw=result,
-                tokens_generated=tokens_generated,
+            endpoint = f"{self.base_url}/api/generate"
+            
+            logger.info(
+                "Ollama API Request (generate)",
+                extra={
+                    "endpoint": endpoint,
+                    "model": config.model_name,
+                    "prompt_length": len(prompt),
+                    "temperature": config.temperature,
+                },
             )
+            logger.debug(f"Ollama generate request payload: {json.dumps(payload, indent=2)}")
+
+            timeout = aiohttp.ClientTimeout(total=config.timeout)
+            async with session.post(
+                endpoint,
+                json=payload,
+                timeout=timeout,
+            ) as response:
+                response_status = response.status
+                
+                if response.status != 200:
+                    response_text = await response.text()
+                    logger.error(
+                        "Ollama API error",
+                        extra={
+                            "endpoint": endpoint,
+                            "status": response.status,
+                            "model": config.model_name,
+                            "error": response_text,
+                        },
+                    )
+                    retryable = response.status >= 500
+                    raise LLMRequestError(
+                        f"API returned status {response.status}. Details: {response_text}",
+                        retryable=retryable,
+                    )
+
+                result = await response.json()
+                logger.debug(f"Ollama generate raw response: {json.dumps(result, indent=2)}")
+                
+                generated_text = result.get("response", "")
+                generated_text = (generated_text or "").strip()
+
+                logger.info(
+                    "Ollama API Response",
+                    extra={
+                        "status": response_status,
+                        "model": config.model_name,
+                        "content_length": len(generated_text),
+                    },
+                )
+
+                if len(generated_text) > 4000:
+                    generated_text = generated_text[:4000] + "... [truncated due to length]"
+
+                tokens_generated = len(generated_text.split())
+
+                return LLMResponse(
+                    model_key=model_key,
+                    provider_model=config.model_name,
+                    provider=config.provider,
+                    content=generated_text,
+                    raw=result,
+                    tokens_generated=tokens_generated,
+                )
 
     async def _generate_with_openrouter(
         self,
@@ -510,7 +812,7 @@ class LLMHandler:
         url = f"{self.openrouter_base_url}/chat/completions"
 
         headers = {
-            "Authorization": f"Bearer {self.openrouter_api_key}",
+            "Authorization": f"Bearer {self.openrouter_api_key[:10]}...{self.openrouter_api_key[-4:]}",  # Masked for logging
             "Content-Type": "application/json",
         }
         if self.openrouter_site_url:
@@ -533,10 +835,45 @@ class LLMHandler:
         if config.options:
             payload.update(config.options)
 
+        logger.info(
+            "OpenRouter API Request",
+            extra={
+                "url": url,
+                "model": config.model_name,
+                "message_count": len(messages),
+                "has_tools": bool(tools),
+                "tools_count": len(tools) if tools else 0,
+                "tool_choice": tool_choice,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+            },
+        )
+        logger.debug(f"OpenRouter request payload: {json.dumps(payload, indent=2)}")
+
         timeout = aiohttp.ClientTimeout(total=config.timeout)
-        async with session.post(url, json=payload, headers=headers, timeout=timeout) as response:
+        async with session.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self.openrouter_api_key}",
+                "Content-Type": "application/json",
+                **({k: v for k, v in headers.items() if k not in ["Authorization", "Content-Type"]}),
+            },
+            timeout=timeout,
+        ) as response:
+            response_status = response.status
+            
             if response.status != 200:
                 response_text = await response.text()
+                logger.error(
+                    "OpenRouter API error",
+                    extra={
+                        "url": url,
+                        "status": response.status,
+                        "model": config.model_name,
+                        "error": response_text,
+                    },
+                )
                 retryable = response.status in {408, 409, 429} or response.status >= 500
                 raise LLMRequestError(
                     f"API returned status {response.status}. Details: {response_text}",
@@ -544,8 +881,14 @@ class LLMHandler:
                 )
 
             result = await response.json()
+            logger.debug(f"OpenRouter raw response: {json.dumps(result, indent=2)}")
+            
             choices = result.get("choices") or []
             if not choices:
+                logger.error(
+                    "Unexpected OpenRouter response format",
+                    extra={"response": result},
+                )
                 raise LLMRequestError(
                     f"Unexpected API response format: {result}", retryable=False
                 )
@@ -558,6 +901,20 @@ class LLMHandler:
                 usage.get("completion_tokens")
                 or usage.get("total_tokens")
                 or len(content.split())
+            )
+
+            logger.info(
+                "OpenRouter API Response",
+                extra={
+                    "status": response_status,
+                    "model": config.model_name,
+                    "content_length": len(content),
+                    "has_tool_calls": bool(tool_calls),
+                    "tool_calls_count": len(tool_calls) if tool_calls else 0,
+                    "tokens_completion": usage.get("completion_tokens"),
+                    "tokens_prompt": usage.get("prompt_tokens"),
+                    "tokens_total": usage.get("total_tokens"),
+                },
             )
 
             if len(content) > 4000:

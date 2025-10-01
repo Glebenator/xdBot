@@ -21,6 +21,7 @@ class LLM(commands.Cog):
             openrouter_base_url=config.settings.openrouter_base_url,
             openrouter_site_url=config.settings.openrouter_site_url,
             openrouter_app_name=config.settings.openrouter_app_name,
+            tavily_api_key=config.settings.tavily_api_key,
         )
         self._background_tasks: Set[asyncio.Task] = set()
         self.db = get_database_handler()
@@ -30,7 +31,7 @@ class LLM(commands.Cog):
         # Register models with specific configurations
         self.model_configs = {
             'chat': ModelConfig(
-                'xdbot-smart',
+                'qwen3:4b',
                 temperature=0.7,
                 top_p=0.9,
                 num_predict=2048,

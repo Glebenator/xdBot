@@ -7,7 +7,7 @@ A modular Discord bot built on top of `discord.py` featuring asynchronous data s
 - Fully async persistence layer backed by `aiosqlite` with multi-guild awareness
 - Hybrid (prefix + slash) commands with automatic ephemeral handling
 - Configurable Random.org integration with secure local fallback
-- Optional Ollama or OpenRouter-powered LLM responses with chat history management
+- Optional Ollama or OpenRouter-powered LLM responses with chat history management and web search via Tavily
 - Modular cog structure for admin, moderation, fun, image, and voice features
 
 ## 📦 Requirements
@@ -18,6 +18,7 @@ A modular Discord bot built on top of `discord.py` featuring asynchronous data s
 - (Optional) Random.org API key for true randomness
 - (Optional) Ollama endpoint for local LLM features
 - (Optional) OpenRouter API key for hosted LLM access
+- (Optional) Tavily API key for LLM web search capabilities
 
 ## ⚙️ Configuration
 
@@ -35,6 +36,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://your.site (needed only if OpenRouter requires a referrer)
 OPENROUTER_APP_NAME=xdBot
 OPENROUTER_DEFAULT_MODEL=anthropic/claude-3-haiku (optional preset)
+TAVILY_API_KEY=your_tavily_key_optional
 ```
 
 - `BOT_PREFIX` defaults to `!`.
@@ -44,6 +46,7 @@ OPENROUTER_DEFAULT_MODEL=anthropic/claude-3-haiku (optional preset)
 - `OPENROUTER_API_KEY` enables hosted models. When omitted, OpenRouter-backed configs are ignored.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` are forwarded to OpenRouter headers for attribution.
 - `OPENROUTER_DEFAULT_MODEL` lets the LLM cog auto-register an OpenRouter chat model without manual edits.
+- `TAVILY_API_KEY` enables web search capabilities for LLMs. When provided, models can automatically search the web for current information. See `TAVILY_SEARCH_INTEGRATION.md` for details.
 
 All values are accessible through `config.settings` for consistent use across the code base.
 
@@ -66,7 +69,7 @@ If `.env.example` is not available, create a `.env` file manually and use the co
 - `admin`: owner/admin utilities for streaks, points, and cog management
 - `fun`: Random.org rolls, success streak tracking, and leaderboards
 - `moderation`: bad-word tracking, stats, and leaderboards
-- `llm`: chat and mention responses via configurable Ollama/OpenRouter models with conversation tracking; includes admin utilities `/llm_set_model` and `/llm_current_model` to manage the active chat provider
+- `llm`: chat and mention responses via configurable Ollama/OpenRouter models with conversation tracking and web search tool integration; includes admin utilities `/llm_set_model` and `/llm_current_model` to manage the active chat provider
 - `image`, `general`, `voice`: assorted utility features (see code for details)
 
 ## 🛡️ Data Layer

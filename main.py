@@ -13,12 +13,24 @@ import config
 # Voice support has been removed from the bot; suppress the optional PyNaCl warning.
 discord.VoiceClient.warn_nacl = False
 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# Set detailed logging for LLM and search tool operations
+# Change to DEBUG to see full API requests/responses
+llm_log_level = os.getenv('LLM_LOG_LEVEL', 'INFO').upper()
+logging.getLogger('utils.ollama_handler').setLevel(getattr(logging, llm_log_level, logging.INFO))
+logging.getLogger('utils.search_tool').setLevel(getattr(logging, llm_log_level, logging.INFO))
+
+# Reduce noise from Discord and aiohttp
+logging.getLogger('discord.http').setLevel(logging.WARNING)
+logging.getLogger('discord.gateway').setLevel(logging.WARNING)
+logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 
 class DiscordBot(commands.Bot):
     def __init__(self):
