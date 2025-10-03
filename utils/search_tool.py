@@ -188,7 +188,7 @@ class TavilySearchTool:
             "type": "function",
             "function": {
                 "name": "tavily_search",
-                "description": "Search the web for current information using Tavily. Use this when you need up-to-date information, facts, news, or answers to questions you don't have knowledge about.",
+                "description": "Search the web for current information using Tavily. Use this when you need up-to-date information, facts, news, or answers to questions you don't have knowledge about. NOTE: For stock prices, stock data, or ticker symbols, use the stock market tools instead (get_stock_price, search_stocks, get_market_status).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -209,8 +209,8 @@ class TavilySearchTool:
                         },
                         "topic": {
                             "type": "string",
-                            "enum": ["general", "news", "finance"],
-                            "description": "Category of search: 'general' for broad searches, 'news' for current events, 'finance' for financial information.",
+                            "enum": ["general", "news"],
+                            "description": "Category of search: 'general' for broad searches, 'news' for current events. DO NOT use for stock/financial data - use stock tools instead.",
                             "default": "general",
                         },
                     },
@@ -231,7 +231,7 @@ class TavilySearchTool:
             "type": "function",
             "function": {
                 "name": "tavily_search",
-                "description": "Search the web for current information. Use this when you need up-to-date information, facts, news, or answers to questions you don't have knowledge about.",
+                "description": "Search the web for current information. Use this when you need up-to-date information, facts, news, or answers to questions you don't have knowledge about. IMPORTANT: For stock prices, ticker symbols, or stock market data, use get_stock_price, search_stocks, or get_market_status instead.",
                 "parameters": {
                     "type": "object",
                     "properties": {

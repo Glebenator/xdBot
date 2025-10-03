@@ -23,6 +23,12 @@ class LLM(commands.Cog):
             openrouter_app_name=config.settings.openrouter_app_name,
             tavily_api_key=config.settings.tavily_api_key,
         )
+        
+        # Enable stock market tools if Polygon API key is available
+        if config.settings.polygon_enabled and config.settings.polygon_api_key:
+            self.llm_handler.enable_stock_tools(config.settings.polygon_api_key)
+            logging.info("Stock market tools enabled for LLM")
+        
         self._background_tasks: Set[asyncio.Task] = set()
         self.db = get_database_handler()
         self.default_chat_model_key = 'chat'

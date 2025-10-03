@@ -67,6 +67,7 @@ class Settings:
 	openrouter_app_name: str = DEFAULT_OPENROUTER_APP_NAME
 	openrouter_default_model: Optional[str] = None
 	tavily_api_key: Optional[str] = None
+	polygon_api_key: Optional[str] = None
 
 	@property
 	def random_org_enabled(self) -> bool:
@@ -83,6 +84,10 @@ class Settings:
 	@property
 	def tavily_enabled(self) -> bool:
 		return bool(self.tavily_api_key)
+
+	@property
+	def polygon_enabled(self) -> bool:
+		return bool(self.polygon_api_key)
 
 
 def _load_settings() -> Settings:
@@ -107,6 +112,7 @@ def _load_settings() -> Settings:
 	openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", DEFAULT_OPENROUTER_APP_NAME)
 	openrouter_default_model = os.getenv("OPENROUTER_DEFAULT_MODEL") or None
 	tavily_api_key = os.getenv("TAVILY_API_KEY") or None
+	polygon_api_key = os.getenv("POLYGON_API_KEY") or None
 
 	return Settings(
 		prefix=prefix,
@@ -121,6 +127,7 @@ def _load_settings() -> Settings:
 		openrouter_app_name=openrouter_app_name,
 		openrouter_default_model=openrouter_default_model,
 		tavily_api_key=tavily_api_key,
+		polygon_api_key=polygon_api_key,
 	)
 
 

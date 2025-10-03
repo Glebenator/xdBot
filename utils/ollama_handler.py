@@ -154,11 +154,41 @@ class LLMHandler:
         if tavily_api_key:
             from utils.search_tool import TavilySearchTool
             self._search_tool = TavilySearchTool(api_key=tavily_api_key)
+        
+        # Initialize stock tool if configured
+        self._stock_tool: Optional[Any] = None
 
     def register_model(self, key: str, config: ModelConfig) -> None:
         """Register or replace a model configuration under a logical key."""
 
         self.model_configs[key] = config
+    
+    def enable_stock_tools(self, polygon_api_key: str) -> None:
+        """Enable stock market tools with the provided Polygon.io API key.
+        
+        Args:
+            polygon_api_key: Polygon.io API key
+        """
+        if not self._stock_tool:
+            from utils.stock_tool import StockMarketTool
+            self._stock_tool = StockMarketTool(api_key=polygon_api_key)
+            logger.info("Stock market tools enabled")
+    
+    def get_available_tools_schemas(self) -> List[Dict[str, Any]]:
+        """Get all available tool schemas for function calling.
+        
+        Returns:
+            List of tool schemas that can be passed to LLM
+        """
+        schemas = []
+        
+        if self._search_tool:
+            schemas.append(self._search_tool.get_tool_schema())
+        
+        if self._stock_tool:
+            schemas.extend(self._stock_tool.get_all_tool_schemas())
+        
+        return schemas
 
     def list_model_keys(self) -> List[str]:
         return list(self.model_configs.keys())
@@ -183,6 +213,9 @@ class LLMHandler:
         
         if self._search_tool:
             await self._search_tool.close()
+        
+        if self._stock_tool:
+            await self._stock_tool.close()
 
     def add_to_history(
         self,
@@ -270,6 +303,87 @@ class LLMHandler:
 
         self._last_cleanup = current_time
 
+    def _create_tool_guidance_message(self, tools: List[Dict[str, Any]]) -> str:
+        """Create a system message to guide the model on proper tool usage.
+        
+        Args:
+            tools: List of available tool definitions
+            
+        Returns:
+            System message content with tool usage guidance
+        """
+        tool_names = []
+        stock_tools = []
+        indicator_tools = []
+        
+        for tool in tools:
+            function = tool.get("function", {})
+            name = function.get("name", "")
+            tool_names.append(name)
+            
+            if name in ["get_stock_price", "search_stocks", "get_market_status"]:
+                stock_tools.append(name)
+            elif name in ["get_stock_rsi", "get_stock_sma", "get_stock_ema", "get_stock_macd"]:
+                indicator_tools.append(name)
+        
+        guidance_parts = [
+            "You are a helpful AI assistant with access to external tools.",
+        ]
+        
+        # Add specific guidance for stock tools if available
+        if stock_tools:
+            guidance_parts.append(
+                "\nIMPORTANT - Stock Market Queries:"
+                "\n- For stock prices, ticker symbols, market data, or financial information about publicly traded companies, ALWAYS use the stock market tools first:"
+                "\n  • get_stock_price(ticker) - Get current price and trading data for a specific stock"
+                "\n  • search_stocks(query) - Find ticker symbols when you don't know the exact ticker"
+                "\n  • get_market_status() - Check if markets are currently open"
+                "\n- Examples requiring stock tools:"
+                "\n  • 'What's the price of Apple stock?' → use get_stock_price('AAPL')"
+                "\n  • 'How is Tesla doing today?' → use get_stock_price('TSLA')"
+                "\n  • 'Find the ticker for Microsoft' → use search_stocks('Microsoft')"
+                "\n  • 'Is the market open?' → use get_market_status()"
+                "\n  • 'Compare Apple and Google stock' → use get_stock_price for both"
+            )
+        
+        # Add guidance for technical indicator tools if available
+        if indicator_tools:
+            guidance_parts.append(
+                "\nTechnical Analysis Tools:"
+                "\n- For technical indicators, momentum, trends, and trading signals, use these tools:"
+                "\n  • get_stock_rsi(ticker, window) - Relative Strength Index (overbought/oversold detection)"
+                "\n  • get_stock_sma(ticker, window) - Simple Moving Average (trend identification)"
+                "\n  • get_stock_ema(ticker, window) - Exponential Moving Average (faster trend detection)"
+                "\n  • get_stock_macd(ticker) - MACD indicator (momentum and buy/sell signals)"
+                "\n- Examples requiring indicator tools:"
+                "\n  • 'Is Apple overbought?' → use get_stock_rsi('AAPL')"
+                "\n  • 'What's the 50-day moving average for Tesla?' → use get_stock_sma('TSLA', 50)"
+                "\n  • 'Show me the MACD for NVDA' → use get_stock_macd('NVDA')"
+                "\n  • 'Check the trend for Microsoft' → use get_stock_sma or get_stock_ema"
+                "\n  • 'Is Tesla showing bullish momentum?' → use get_stock_macd('TSLA')"
+            )
+        
+        # Add guidance for search tool if available
+        if "tavily_search" in tool_names:
+            guidance_parts.append(
+                "\nWeb Search Tool:"
+                "\n- Use tavily_search ONLY for:"
+                "\n  • Current events and news (non-financial)"
+                "\n  • General knowledge you don't have"
+                "\n  • Recent developments or facts"
+                "\n- DO NOT use tavily_search for stock prices, technical indicators, or financial data - use stock tools instead"
+            )
+        
+        guidance_parts.append(
+            "\nGeneral Rules:"
+            "\n- Choose the most appropriate tool for each query"
+            "\n- You can use multiple tools in sequence if needed"
+            "\n- Always prefer specialized tools (stock/indicator tools) over general search for financial queries"
+            "\n- Provide clear, helpful responses based on the tool results"
+        )
+        
+        return "\n".join(guidance_parts)
+
     async def generate_response(
         self,
         user_id: int,
@@ -288,14 +402,32 @@ class LLMHandler:
         if model_config is None:
             raise LLMRequestError(f"Unknown model key: {model_key}", retryable=False)
         
-        # Prepare tools - use provided tools or get from config, and add search tool if available
+        # Prepare tools - use provided tools or get from config
         tools_payload = tools if tools is not None else model_config.tools
-        if tools_payload is None and self._search_tool:
-            # Default to search tool if available and no other tools specified
-            if model_config.provider is ProviderType.OLLAMA:
-                tools_payload = [self._search_tool.get_ollama_tool_definition()]
-            else:
-                tools_payload = [self._search_tool.get_tool_definition()]
+        
+        # If no tools specified, gather all available tools
+        if tools_payload is None:
+            available_tools = []
+            
+            # Add stock tools first (higher priority for financial queries)
+            if self._stock_tool:
+                if model_config.provider is ProviderType.OLLAMA:
+                    # For Ollama, we need to provide tool definitions directly
+                    available_tools.extend(self._stock_tool.get_all_tool_schemas())
+                else:
+                    # For OpenRouter/OpenAI, use the standard schemas
+                    available_tools.extend(self._stock_tool.get_all_tool_schemas())
+            
+            # Add search tool second (fallback for non-financial queries)
+            if self._search_tool:
+                if model_config.provider is ProviderType.OLLAMA:
+                    available_tools.append(self._search_tool.get_ollama_tool_definition())
+                else:
+                    available_tools.append(self._search_tool.get_tool_definition())
+            
+            # Only use tools if we have any available
+            if available_tools:
+                tools_payload = available_tools
         
         tool_choice_payload = tool_choice if tool_choice is not None else model_config.tool_choice
 
@@ -311,6 +443,14 @@ class LLMHandler:
 
         history_messages = self._get_history_messages(user_id, model_key)
         request_messages = [msg.to_dict() for msg in history_messages]
+        
+        # Add system message for tool guidance if tools are available
+        if tools_payload:
+            system_guidance = self._create_tool_guidance_message(tools_payload)
+            # Insert system message at the beginning if not already present
+            if not request_messages or request_messages[0].get("role") != "system":
+                request_messages.insert(0, {"role": "system", "content": system_guidance})
+        
         request_messages.append({"role": "user", "content": message})
         
         # Track the original user message
@@ -560,6 +700,54 @@ class LLMHandler:
                 logger.debug(f"Formatted search results for LLM: {formatted_results[:500]}...")
                 
                 return formatted_results
+            
+            # Stock market tool calls
+            elif function_name in ["get_stock_price", "search_stocks", "get_market_status", 
+                                   "get_stock_rsi", "get_stock_sma", "get_stock_ema", "get_stock_macd"]:
+                if not self._stock_tool:
+                    logger.warning("Stock tool requested but Polygon API key not configured")
+                    return "Error: Stock market tool is not available (Polygon API key not configured)"
+                
+                logger.info(
+                    f"Executing stock tool: {function_name}",
+                    extra={
+                        "function_name": function_name,
+                        "arguments": arguments,
+                    },
+                )
+                
+                result_data = await self._stock_tool.execute_tool_call(function_name, arguments)
+                
+                # Format the result for better LLM consumption
+                if function_name == "get_stock_price":
+                    formatted_result = self._stock_tool.format_price_response(result_data)
+                elif function_name == "search_stocks":
+                    formatted_result = self._stock_tool.format_search_response(result_data)
+                elif function_name == "get_market_status":
+                    formatted_result = self._stock_tool.format_market_status_response(result_data)
+                elif function_name == "get_stock_rsi":
+                    formatted_result = self._stock_tool.format_rsi_response(result_data)
+                elif function_name == "get_stock_sma":
+                    formatted_result = self._stock_tool.format_sma_response(result_data)
+                elif function_name == "get_stock_ema":
+                    formatted_result = self._stock_tool.format_ema_response(result_data)
+                elif function_name == "get_stock_macd":
+                    formatted_result = self._stock_tool.format_macd_response(result_data)
+                else:
+                    formatted_result = json.dumps(result_data, indent=2)
+                
+                logger.info(
+                    "Stock tool execution completed",
+                    extra={
+                        "function_name": function_name,
+                        "has_error": "error" in result_data,
+                        "formatted_length": len(formatted_result),
+                    },
+                )
+                logger.debug(f"Stock tool result: {formatted_result}")
+                
+                return formatted_result
+            
             else:
                 logger.warning(f"Unknown tool function requested: {function_name}")
                 return f"Error: Unknown tool function: {function_name}"
