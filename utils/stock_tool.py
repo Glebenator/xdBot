@@ -206,6 +206,30 @@ class StockMarketTool:
                 }
             }
         }
+    
+    def get_golden_cross_tool_schema(self) -> Dict[str, Any]:
+        """Get the OpenAI function calling schema for golden cross detection.
+        
+        Returns:
+            Dictionary containing the golden cross tool schema
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": "detect_golden_cross",
+                "description": "Detect golden cross or death cross pattern - one of the most powerful trend reversal signals. Golden Cross (VERY BULLISH): 50-day SMA crosses above 200-day SMA. Death Cross (VERY BEARISH): 50-day SMA crosses below 200-day SMA. USE THIS TOOL for major trend analysis, long-term signals, reversal detection. Examples: 'Has Apple had a golden cross?', 'Check for death cross in SPY', 'Any crossover signals for Tesla?'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ticker": {
+                            "type": "string",
+                            "description": "Stock ticker symbol (e.g., 'AAPL', 'SPY', 'TSLA')"
+                        }
+                    },
+                    "required": ["ticker"]
+                }
+            }
+        }
 
     def get_all_tool_schemas(self) -> List[Dict[str, Any]]:
         """Get all available tool schemas for stock market operations.
@@ -220,7 +244,8 @@ class StockMarketTool:
             self.get_rsi_tool_schema(),
             self.get_sma_tool_schema(),
             self.get_ema_tool_schema(),
-            self.get_macd_tool_schema()
+            self.get_macd_tool_schema(),
+            self.get_golden_cross_tool_schema()
         ]
 
     async def get_stock_price(self, ticker: str) -> Dict[str, Any]:
@@ -654,6 +679,91 @@ class StockMarketTool:
                 "error": f"Failed to fetch MACD for {ticker.upper()}: {str(e)}",
                 "ticker": ticker.upper()
             }
+    
+    async def detect_golden_cross(self, ticker: str) -> Dict[str, Any]:
+        """Detect golden cross or death cross pattern.
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Dictionary containing crossover detection and analysis
+        """
+        if not self.api_key:
+            return {
+                "error": "Stock market data is not configured",
+                "ticker": ticker.upper()
+            }
+        
+        try:
+            # Fetch both SMAs with history
+            sma_50_data = await self.polygon.get_sma(ticker, window=50, limit=10)
+            sma_200_data = await self.polygon.get_sma(ticker, window=200, limit=10)
+            
+            sma_50_results = sma_50_data.get("results", {}).get("values", [])
+            sma_200_results = sma_200_data.get("results", {}).get("values", [])
+            
+            if not sma_50_results or not sma_200_results:
+                return {
+                    "error": f"Insufficient SMA data for {ticker.upper()}. Stock may be too new.",
+                    "ticker": ticker.upper()
+                }
+            
+            if len(sma_50_results) < 2 or len(sma_200_results) < 2:
+                return {
+                    "error": f"Need more historical data to detect crossovers for {ticker.upper()}",
+                    "ticker": ticker.upper()
+                }
+            
+            # Get current and previous values
+            current_50 = sma_50_results[-1].get("value", 0)
+            current_200 = sma_200_results[-1].get("value", 0)
+            previous_50 = sma_50_results[-2].get("value", 0)
+            previous_200 = sma_200_results[-2].get("value", 0)
+            
+            # Detect crossover
+            crossover = None
+            signal = None
+            interpretation = ""
+            
+            # Golden cross: 50 SMA crosses above 200 SMA
+            if previous_50 <= previous_200 and current_50 > current_200:
+                crossover = "GOLDEN_CROSS"
+                signal = "STRONG BUY"
+                interpretation = "🚀 GOLDEN CROSS DETECTED! The 50-day SMA has crossed above the 200-day SMA. This is an extremely bullish long-term signal indicating a major uptrend."
+            # Death cross: 50 SMA crosses below 200 SMA
+            elif previous_50 >= previous_200 and current_50 < current_200:
+                crossover = "DEATH_CROSS"
+                signal = "STRONG SELL"
+                interpretation = "💀 DEATH CROSS DETECTED! The 50-day SMA has crossed below the 200-day SMA. This is an extremely bearish long-term signal indicating a major downtrend."
+            # No crossover - just report current state
+            elif current_50 > current_200:
+                crossover = None
+                signal = "BULLISH"
+                distance_pct = ((current_50 - current_200) / current_200) * 100
+                interpretation = f"📈 Bullish alignment: 50-day SMA is {distance_pct:.2f}% above 200-day SMA. Uptrend confirmed, but no recent crossover."
+            else:
+                crossover = None
+                signal = "BEARISH"
+                distance_pct = ((current_200 - current_50) / current_200) * 100
+                interpretation = f"📉 Bearish alignment: 50-day SMA is {distance_pct:.2f}% below 200-day SMA. Downtrend confirmed, but no recent crossover."
+            
+            return {
+                "ticker": ticker.upper(),
+                "sma_50": round(current_50, 2),
+                "sma_200": round(current_200, 2),
+                "crossover": crossover,
+                "signal": signal,
+                "interpretation": interpretation,
+                "alignment": "bullish" if current_50 > current_200 else "bearish"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error detecting golden cross for {ticker}: {e}")
+            return {
+                "error": f"Failed to detect golden cross for {ticker.upper()}: {str(e)}",
+                "ticker": ticker.upper()
+            }
 
     async def execute_tool_call(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool call based on function name and arguments.
@@ -688,8 +798,12 @@ class StockMarketTool:
         elif function_name == "get_stock_macd":
             ticker = arguments.get("ticker", "")
             return await self.get_stock_macd(ticker)
+        elif function_name == "detect_golden_cross":
+            ticker = arguments.get("ticker", "")
+            return await self.detect_golden_cross(ticker)
         else:
             return {"error": f"Unknown function: {function_name}"}
+
 
     def format_price_response(self, data: Dict[str, Any]) -> str:
         """Format stock price data for display in chat.

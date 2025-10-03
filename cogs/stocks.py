@@ -1336,6 +1336,88 @@ class Stocks(commands.Cog):
             )
         
         await send_hybrid_message(ctx, embed=embed)
+    
+    @commands.hybrid_command(name="goldencross")
+    async def golden_cross(self, ctx, ticker: str):
+        """Detect golden cross or death cross pattern.
+        
+        Golden Cross: 50-day SMA crosses above 200-day SMA (very bullish)
+        Death Cross: 50-day SMA crosses below 200-day SMA (very bearish)
+        
+        This is one of the most powerful trend reversal signals in technical analysis.
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., AAPL)
+        """
+        if not self.polygon_enabled:
+            embed = create_embed(
+                title="❌ Feature Unavailable",
+                description="Stock data is not configured. Please contact the bot administrator.",
+                color=discord.Color.red()
+            )
+            await send_hybrid_message(ctx, embed=embed)
+            return
+        
+        await defer_hybrid(ctx)
+        
+        try:
+            # Fetch current price and both SMAs with recent history
+            current_price = await self.stock_service.get_current_price(ticker)
+            sma_50 = await self.stock_service.get_sma(ticker, window=50, limit=10)
+            sma_200 = await self.stock_service.get_sma(ticker, window=200, limit=10)
+            
+            if not sma_50 or not sma_200:
+                embed = create_embed(
+                    title=f"📊 {ticker.upper()} - Golden Cross",
+                    description="Insufficient SMA data available. Stock may be too new or data unavailable.",
+                    color=discord.Color.orange()
+                )
+                await send_hybrid_message(ctx, embed=embed)
+                return
+            
+            # Need at least 2 data points to detect crossover
+            if len(sma_50) < 2 or len(sma_200) < 2:
+                embed = create_embed(
+                    title=f"📊 {ticker.upper()} - Golden Cross",
+                    description="Need more historical data to detect crossovers.",
+                    color=discord.Color.orange()
+                )
+                await send_hybrid_message(ctx, embed=embed)
+                return
+            
+            # Get current and previous values
+            current_50 = sma_50[0].value
+            current_200 = sma_200[0].value
+            previous_50 = sma_50[1].value
+            previous_200 = sma_200[1].value
+            
+            # Detect crossover
+            crossover = IndicatorAnalyzer.detect_golden_cross(
+                current_50, current_200,
+                previous_50, previous_200
+            )
+            
+            # Build embed based on pattern
+            embed = self.embed_builder.build_golden_cross_embed(
+                ticker=ticker,
+                current_price=current_price,
+                sma_50_current=current_50,
+                sma_200_current=current_200,
+                sma_50_history=sma_50[:5],
+                sma_200_history=sma_200[:5],
+                crossover=crossover
+            )
+            
+            await send_hybrid_message(ctx, embed=embed)
+        
+        except Exception as e:
+            logger.error(f"Error detecting golden cross for {ticker}: {e}")
+            embed = create_embed(
+                title="❌ Error",
+                description=f"Could not analyze golden cross for `{ticker.upper()}`. Please try again later.",
+                color=discord.Color.red()
+            )
+            await send_hybrid_message(ctx, embed=embed)
 
 
 async def setup(bot):

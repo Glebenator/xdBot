@@ -428,6 +428,165 @@ class StockEmbedBuilder:
         
         return embed
     
+    def build_golden_cross_embed(
+        self,
+        ticker: str,
+        current_price: StockPrice,
+        sma_50_current: float,
+        sma_200_current: float,
+        sma_50_history: List[IndicatorValue],
+        sma_200_history: List[IndicatorValue],
+        crossover: Optional[str] = None
+    ) -> discord.Embed:
+        """Build embed for golden cross / death cross detection.
+        
+        Args:
+            ticker: Stock ticker symbol
+            current_price: Current price data
+            sma_50_current: Current 50-day SMA value
+            sma_200_current: Current 200-day SMA value
+            sma_50_history: Recent 50-day SMA values
+            sma_200_history: Recent 200-day SMA values
+            crossover: 'GOLDEN_CROSS', 'DEATH_CROSS', or None
+            
+        Returns:
+            Discord embed with golden cross analysis
+        """
+        # Determine color and title based on pattern
+        if crossover == "GOLDEN_CROSS":
+            color = discord.Color.green()
+            title_emoji = "🚀"
+            title = f"{title_emoji} {ticker.upper()} - GOLDEN CROSS DETECTED!"
+            description = "**Extremely Bullish Signal**: The 50-day SMA has crossed above the 200-day SMA. This is one of the strongest bullish indicators."
+        elif crossover == "DEATH_CROSS":
+            color = discord.Color.red()
+            title_emoji = "💀"
+            title = f"{title_emoji} {ticker.upper()} - DEATH CROSS DETECTED!"
+            description = "**Extremely Bearish Signal**: The 50-day SMA has crossed below the 200-day SMA. This is one of the strongest bearish indicators."
+        else:
+            # No crossover - just show current state
+            if sma_50_current > sma_200_current:
+                color = discord.Color.green()
+                title_emoji = "📈"
+                title = f"{title_emoji} {ticker.upper()} - Bullish Alignment"
+                distance_pct = ((sma_50_current - sma_200_current) / sma_200_current) * 100
+                description = f"50-day SMA is **{distance_pct:.2f}%** above 200-day SMA. Uptrend confirmed."
+            else:
+                color = discord.Color.red()
+                title_emoji = "📉"
+                title = f"{title_emoji} {ticker.upper()} - Bearish Alignment"
+                distance_pct = ((sma_200_current - sma_50_current) / sma_200_current) * 100
+                description = f"50-day SMA is **{distance_pct:.2f}%** below 200-day SMA. Downtrend confirmed."
+        
+        embed = create_embed(
+            title=title,
+            description=description,
+            color=color.value
+        )
+        
+        # Current price
+        price_emoji = "📈" if current_price.is_bullish else "📉"
+        embed.add_field(
+            name="Current Price",
+            value=f"{price_emoji} {self.formatter.format_price(current_price.close)}",
+            inline=True
+        )
+        
+        # 50-day SMA
+        sma_50_emoji = "🟢" if sma_50_current > sma_200_current else "🔴"
+        embed.add_field(
+            name="50-Day SMA",
+            value=f"{sma_50_emoji} {self.formatter.format_price(sma_50_current)}",
+            inline=True
+        )
+        
+        # 200-day SMA
+        embed.add_field(
+            name="200-Day SMA",
+            value=f"⚪ {self.formatter.format_price(sma_200_current)}",
+            inline=True
+        )
+        
+        # Price position relative to both SMAs
+        above_50 = current_price.close > sma_50_current
+        above_200 = current_price.close > sma_200_current
+        
+        if above_50 and above_200:
+            position = "🚀 Above both SMAs (very bullish)"
+        elif above_50 and not above_200:
+            position = "📈 Above 50 SMA, below 200 SMA"
+        elif not above_50 and above_200:
+            position = "📊 Below 50 SMA, above 200 SMA"
+        else:
+            position = "⚠️ Below both SMAs (very bearish)"
+        
+        embed.add_field(
+            name="Price Position",
+            value=position,
+            inline=False
+        )
+        
+        # Show trend strength
+        if len(sma_50_history) >= 3 and len(sma_200_history) >= 3:
+            # Check if 50 SMA is trending up/down
+            sma_50_trend = "rising" if sma_50_history[0].value > sma_50_history[2].value else "falling"
+            sma_200_trend = "rising" if sma_200_history[0].value > sma_200_history[2].value else "falling"
+            
+            trend_emoji = "📈" if sma_50_trend == "rising" else "📉"
+            embed.add_field(
+                name="50-Day SMA Trend",
+                value=f"{trend_emoji} {sma_50_trend.capitalize()}",
+                inline=True
+            )
+            
+            trend_emoji_200 = "📈" if sma_200_trend == "rising" else "📉"
+            embed.add_field(
+                name="200-Day SMA Trend",
+                value=f"{trend_emoji_200} {sma_200_trend.capitalize()}",
+                inline=True
+            )
+        
+        # Historical comparison
+        if len(sma_50_history) >= 5:
+            history_50 = " → ".join([f"{h.value:.2f}" for h in reversed(sma_50_history[:5])])
+            embed.add_field(
+                name="50-Day SMA (5-Day History)",
+                value=f"`{history_50}`",
+                inline=False
+            )
+        
+        if len(sma_200_history) >= 5:
+            history_200 = " → ".join([f"{h.value:.2f}" for h in reversed(sma_200_history[:5])])
+            embed.add_field(
+                name="200-Day SMA (5-Day History)",
+                value=f"`{history_200}`",
+                inline=False
+            )
+        
+        # Add interpretation guide
+        embed.add_field(
+            name="📚 Pattern Guide",
+            value=(
+                "**Golden Cross** 🚀: 50 SMA crosses above 200 SMA → Major bullish signal\n"
+                "**Death Cross** 💀: 50 SMA crosses below 200 SMA → Major bearish signal\n"
+                "**Bullish Alignment**: 50 > 200 → Uptrend\n"
+                "**Bearish Alignment**: 50 < 200 → Downtrend"
+            ),
+            inline=False
+        )
+        
+        # Add crossover alert if detected
+        if crossover:
+            alert_emoji = "🎯" if crossover == "GOLDEN_CROSS" else "⚠️"
+            alert_text = "**This is a rare and powerful signal!**" if crossover == "GOLDEN_CROSS" else "**Strong reversal warning!**"
+            embed.add_field(
+                name=f"{alert_emoji} Crossover Alert",
+                value=alert_text,
+                inline=False
+            )
+        
+        return embed
+    
     def _get_signal_color(self, signal: TradingSignal) -> discord.Color:
         """Get Discord color for a trading signal.
         
