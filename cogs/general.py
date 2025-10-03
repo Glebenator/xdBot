@@ -25,6 +25,8 @@ class General(commands.Cog):
             return "Auto-Replies"
         elif cog_name == "LLM":
             return "Chat"
+        elif cog_name == "Stocks":
+            return "📈 Stock Market"
         else:
             return "Misc"
         
