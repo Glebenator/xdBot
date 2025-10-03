@@ -7,6 +7,9 @@ from discord import app_commands
 from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
 from utils.polygon_handler import PolygonHandler
 from utils.chart_generator import ChartGenerator
+from utils.stock_service import StockService
+from utils.stock_embeds import StockEmbedBuilder
+from utils.indicator_analyzer import IndicatorAnalyzer
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
@@ -28,11 +31,15 @@ class Stocks(commands.Cog):
                 "POLYGON_API_KEY is not configured; stock commands will be unavailable."
             )
         
+        # Initialize handlers
         self.polygon = PolygonHandler(config.settings.polygon_api_key)
+        self.stock_service = StockService(self.polygon)
+        self.embed_builder = StockEmbedBuilder()
     
     async def cog_unload(self):
         """Cleanup when cog is unloaded."""
         await self.polygon.close()
+        await self.stock_service.close()
     
     def _create_price_embed(self, data: dict, ticker: str) -> discord.Embed:
         """Create an embed for stock price data.
@@ -913,76 +920,35 @@ class Stocks(commands.Cog):
         await defer_hybrid(ctx)
         
         try:
-            data = await self.polygon.get_rsi(ticker, timespan="day", window=window, limit=10)
-            results = data.get("results", {}).get("values", [])
+            # Fetch data using service layer (returns typed models)
+            current_price = await self.stock_service.get_current_price(ticker)
+            rsi_indicators = await self.stock_service.get_rsi(ticker, window=window, limit=10)
             
-            if not results:
+            if not rsi_indicators:
                 embed = create_embed(
                     title=f"📊 {ticker.upper()} - RSI",
                     description="No RSI data available",
                     color=discord.Color.orange()
                 )
-            else:
-                # Get latest RSI value
-                latest = results[-1]
-                rsi_value = latest.get("value", 0)
-                timestamp = latest.get("timestamp", 0)
-                date = datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
-                
-                # Determine signal
-                if rsi_value >= 70:
-                    signal = "🔴 Overbought"
-                    signal_desc = "Stock may be overvalued - potential sell signal"
-                    color = discord.Color.red()
-                elif rsi_value <= 30:
-                    signal = "🟢 Oversold"
-                    signal_desc = "Stock may be undervalued - potential buy signal"
-                    color = discord.Color.green()
-                else:
-                    signal = "🟡 Neutral"
-                    signal_desc = "No strong signal - hold or wait"
-                    color = discord.Color.gold()
-                
-                embed = create_embed(
-                    title=f"📊 {ticker.upper()} - RSI ({window}-day)",
-                    description=f"Relative Strength Index as of {date}",
-                    color=color.value
-                )
-                
-                embed.add_field(
-                    name="Current RSI",
-                    value=f"**{rsi_value:.2f}**",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="Signal",
-                    value=signal,
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="Interpretation",
-                    value=signal_desc,
-                    inline=False
-                )
-                
-                # Show recent history
-                if len(results) > 1:
-                    history = []
-                    for r in results[-5:]:
-                        rsi_val = r.get("value", 0)
-                        ts = r.get("timestamp", 0)
-                        dt = datetime.fromtimestamp(ts / 1000).strftime("%m/%d")
-                        history.append(f"{dt}: {rsi_val:.2f}")
-                    
-                    embed.add_field(
-                        name="Recent History",
-                        value="\n".join(history),
-                        inline=False
-                    )
-                
-                embed.set_footer(text="RSI: >70 = Overbought, <30 = Oversold")
+                await send_hybrid_message(ctx, embed=embed)
+                return
+            
+            # Get latest RSI value
+            latest_rsi = rsi_indicators[0]
+            
+            # Analyze RSI and generate signal
+            signal = IndicatorAnalyzer.analyze_rsi(latest_rsi.value, window)
+            
+            # Build embed using the embed builder
+            embed = self.embed_builder.build_rsi_embed(
+                ticker=ticker,
+                current_price=current_price,
+                rsi=latest_rsi,
+                signal=signal,
+                history=rsi_indicators[:5]
+            )
+            
+            await send_hybrid_message(ctx, embed=embed)
         
         except Exception as e:
             logger.error(f"Error fetching RSI for {ticker}: {e}")
@@ -991,8 +957,7 @@ class Stocks(commands.Cog):
                 description=f"Could not fetch RSI for `{ticker.upper()}`. Please try again later.",
                 color=discord.Color.red()
             )
-        
-        await send_hybrid_message(ctx, embed=embed)
+            await send_hybrid_message(ctx, embed=embed)
     
     @commands.hybrid_command(name="stocksma")
     async def stock_sma(self, ctx, ticker: str, window: int = 50):
