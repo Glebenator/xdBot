@@ -68,6 +68,12 @@ class Settings:
 	openrouter_default_model: Optional[str] = None
 	tavily_api_key: Optional[str] = None
 	polygon_api_key: Optional[str] = None
+	
+	# Music settings
+	music_max_queue_size: int = 100
+	music_idle_timeout: int = 300  # seconds (5 minutes)
+	music_default_volume: float = 0.5  # 0.0 to 1.0
+	music_max_duration: int = 3600  # seconds (1 hour)
 
 	@property
 	def random_org_enabled(self) -> bool:

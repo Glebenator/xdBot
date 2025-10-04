@@ -40,6 +40,7 @@ class DatabaseHandler:
             self._ensure_prompts_table(cursor)
             self._ensure_command_executions_table(cursor)
             self._ensure_llm_settings_table(cursor)
+            self._ensure_music_history_table(cursor)
             self._ensure_indexes(cursor)
 
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -339,6 +340,21 @@ class DatabaseHandler:
             """
         )
 
+    def _ensure_music_history_table(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS music_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                song_title TEXT NOT NULL,
+                song_url TEXT NOT NULL,
+                song_duration INTEGER DEFAULT 0,
+                played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
     def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_command_usage_guild_user ON command_usage (guild_id, user_id)"
@@ -351,6 +367,12 @@ class DatabaseHandler:
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_word_stats_guild_word ON word_stats (guild_id, word)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_music_history_guild_user ON music_history (guild_id, user_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_music_history_guild_song ON music_history (guild_id, song_url)"
         )
 
     # ------------------------------------------------------------------
@@ -910,6 +932,96 @@ class DatabaseHandler:
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Music history
+    # ------------------------------------------------------------------
+    async def log_music_play(
+        self,
+        guild_id: int,
+        user_id: int,
+        song_title: str,
+        song_url: str,
+        song_duration: int = 0,
+    ) -> None:
+        """Log a song play to music history.
+        
+        Args:
+            guild_id: Discord guild ID
+            user_id: Discord user ID
+            song_title: Title of the song
+            song_url: URL of the song
+            song_duration: Duration in seconds
+        """
+        async with self._connect() as conn:
+            await conn.execute(
+                """
+                INSERT INTO music_history (guild_id, user_id, song_title, song_url, song_duration, played_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (guild_id, user_id, song_title, song_url, song_duration),
+            )
+            await conn.commit()
+            logger.debug(
+                f"Logged music play: '{song_title}' by user {user_id} in guild {guild_id}"
+            )
+
+    async def get_user_music_stats(
+        self, guild_id: int, user_id: int, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get a user's music listening statistics.
+        
+        Args:
+            guild_id: Discord guild ID
+            user_id: Discord user ID
+            limit: Maximum number of results
+            
+        Returns:
+            List of most played songs with play counts
+        """
+        async with self._connect() as conn:
+            async with conn.execute(
+                """
+                SELECT song_title, song_url, COUNT(*) as play_count,
+                       MAX(played_at) as last_played
+                FROM music_history
+                WHERE guild_id = ? AND user_id = ?
+                GROUP BY song_url
+                ORDER BY play_count DESC
+                LIMIT ?
+                """,
+                (guild_id, user_id, limit),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def get_guild_top_songs(
+        self, guild_id: int, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get the most played songs in a guild.
+        
+        Args:
+            guild_id: Discord guild ID
+            limit: Maximum number of results
+            
+        Returns:
+            List of top songs with play counts
+        """
+        async with self._connect() as conn:
+            async with conn.execute(
+                """
+                SELECT song_title, song_url, COUNT(*) as play_count,
+                       MAX(played_at) as last_played
+                FROM music_history
+                WHERE guild_id = ?
+                GROUP BY song_url
+                ORDER BY play_count DESC
+                LIMIT ?
+                """,
+                (guild_id, limit),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
 
 
 _shared_db_handler: Optional[DatabaseHandler] = None

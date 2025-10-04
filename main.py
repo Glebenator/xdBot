@@ -10,9 +10,6 @@ from discord.ext import commands
 
 import config
 
-# Voice support has been removed from the bot; suppress the optional PyNaCl warning.
-discord.VoiceClient.warn_nacl = False
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +34,7 @@ class DiscordBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
+        intents.voice_states = True  # Enable voice state tracking for music
 
         super().__init__(
             command_prefix=commands.when_mentioned_or(config.settings.prefix),
