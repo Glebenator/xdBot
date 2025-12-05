@@ -23,6 +23,8 @@ DEFAULT_PREFIX = "!"
 DEFAULT_OWNER_IDS: List[int] = []
 DEFAULT_GUILD_ID: Optional[int] = None
 DEFAULT_OLLAMA_URL = "http://192.168.50.69:11434"
+DEFAULT_OLLAMA_CHAT_MODEL = "qwen3:4b"
+DEFAULT_OLLAMA_MENTION_MODEL = "xdbot-rude"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_APP_NAME = "xdBot"
 
@@ -61,6 +63,8 @@ class Settings:
 	discord_token: Optional[str] = None
 	random_org_api_key: Optional[str] = None
 	ollama_url: str = DEFAULT_OLLAMA_URL
+	ollama_chat_model: str = DEFAULT_OLLAMA_CHAT_MODEL
+	ollama_mention_model: str = DEFAULT_OLLAMA_MENTION_MODEL
 	openrouter_api_key: Optional[str] = None
 	openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
 	openrouter_site_url: Optional[str] = None
@@ -112,6 +116,8 @@ def _load_settings() -> Settings:
 	discord_token = os.getenv("DISCORD_TOKEN")
 	random_org_api_key = os.getenv("RANDOM_ORG_KEY")
 	ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
+	ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", DEFAULT_OLLAMA_CHAT_MODEL)
+	ollama_mention_model = os.getenv("OLLAMA_MENTION_MODEL", DEFAULT_OLLAMA_MENTION_MODEL)
 	openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 	openrouter_base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
 	openrouter_site_url = os.getenv("OPENROUTER_SITE_URL") or None
@@ -127,6 +133,8 @@ def _load_settings() -> Settings:
 		discord_token=discord_token,
 		random_org_api_key=random_org_api_key,
 		ollama_url=ollama_url,
+		ollama_chat_model=ollama_chat_model,
+		ollama_mention_model=ollama_mention_model,
 		openrouter_api_key=openrouter_api_key,
 		openrouter_base_url=openrouter_base_url,
 		openrouter_site_url=openrouter_site_url,

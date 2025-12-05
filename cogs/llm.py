@@ -32,7 +32,7 @@ class LLM(commands.Cog):
         # Register models with specific configurations
         self.model_configs = {
             'chat': ModelConfig(
-                'qwen3:4b',
+                config.settings.ollama_chat_model,
                 temperature=0.7,
                 top_p=0.9,
                 num_predict=2048,
@@ -41,14 +41,14 @@ class LLM(commands.Cog):
                 timeout=500  # Longer timeout for technical responses
             ),
             'mention': ModelConfig(
-                'xdbot-rude',
+                config.settings.ollama_mention_model,
                 temperature=0.8,  # Slightly more random for personality
                 top_p=0.95,
                 num_predict=1024,  # Shorter responses for chat
                 stop=["User:", "Assistant:"],
                 max_tokens=2048,
                 timeout=120,  # Shorter timeout for chat responses
-                supports_tools=False  # This model doesn't support tool calling
+                supports_tools=True  # This model doesn't support tool calling
             )
         }
 
