@@ -583,7 +583,22 @@ class LLMHandler:
             # Parse arguments
             try:
                 if isinstance(arguments_str, str):
-                    arguments = json.loads(arguments_str)
+                    try:
+                        arguments = json.loads(arguments_str)
+                    except json.JSONDecodeError as parse_exc:
+                        # Handle "Extra data" errors by extracting just the first JSON object
+                        if "Extra data" in str(parse_exc):
+                            logger.warning(
+                                "Tool arguments contain extra data, attempting to extract first JSON object",
+                                extra={
+                                    "function_name": function_name,
+                                    "arguments_str": arguments_str[:200],
+                                },
+                            )
+                            decoder = json.JSONDecoder()
+                            arguments, _ = decoder.raw_decode(arguments_str.strip())
+                        else:
+                            raise
                 else:
                     arguments = arguments_str
                 logger.debug(f"Tool call parsed arguments: {arguments}")

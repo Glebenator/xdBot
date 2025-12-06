@@ -38,7 +38,7 @@ class LLM(commands.Cog):
                 num_predict=2048,
                 stop=["User:", "Assistant:"],
                 max_tokens=8192,
-                timeout=500  # Longer timeout for technical responses
+                timeout=600  # Longer timeout for technical responses
             ),
             'mention': ModelConfig(
                 config.settings.ollama_mention_model,
@@ -47,7 +47,7 @@ class LLM(commands.Cog):
                 num_predict=1024,  # Shorter responses for chat
                 stop=["User:", "Assistant:"],
                 max_tokens=2048,
-                timeout=120,  # Shorter timeout for chat responses
+                timeout=180,  # Shorter timeout for chat responses
                 supports_tools=True  # This model doesn't support tool calling
             )
         }
