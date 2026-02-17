@@ -1,10 +1,10 @@
 # utils/rng.py
-import aiohttp
 import asyncio
-import secrets  # Fallback for errors
-from typing import Optional, List
 import logging
+import secrets  # Fallback for errors
+from typing import List, Optional
 
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class RandomOrgRNG:
             return None
 
         session = await self._get_session()
-        
+
         payload = {
             "jsonrpc": "2.0",
             "method": method,
@@ -50,7 +50,7 @@ class RandomOrgRNG:
                 if "error" in data:
                     raise RuntimeError(f"Random.org error: {data['error']}")
                 return data["result"]
-        except Exception as exc:
+        except Exception:
             logger.warning(
                 "Random.org request failed", exc_info=True,
                 extra={"method": method, "params": {k: params[k] for k in params if k != 'apiKey'}}
@@ -69,7 +69,7 @@ class RandomOrgRNG:
                     "replacement": True
                 }
             )
-            
+
             if result and "random" in result:
                 self.remaining_bits = result.get("bitsLeft", 0)
                 return result["random"]["data"]
@@ -83,7 +83,7 @@ class RandomOrgRNG:
                 return numbers[0]
         except Exception:
             logger.exception("Unexpected error retrieving integers from Random.org")
-        
+
         # Fallback to secrets module if Random.org fails
         range_size = max_val - min_val + 1
         value = min_val + secrets.randbelow(range_size)

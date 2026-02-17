@@ -20,10 +20,9 @@ from utils.music_exceptions import (
     BotNotInVoiceError,
     DifferentVoiceChannelError,
     NotInVoiceChannelError,
-    QueueEmptyError,
     YTDLError,
 )
-from utils.music_queue import GuildMusicQueue, LoopMode, QueueManager, Song
+from utils.music_queue import LoopMode, QueueManager, Song
 from utils.voice_handler import YTDLSource
 
 logger = logging.getLogger(__name__)
@@ -41,18 +40,18 @@ class Music(commands.Cog):
     async def cog_unload(self):
         """Cleanup when cog is unloaded."""
         logger.info("Unloading Music cog, cleaning up voice connections...")
-        
+
         # Cancel all idle tasks
         for task in self.idle_tasks.values():
             if not task.done():
                 task.cancel()
-        
+
         # Disconnect from all voice channels
         for voice_client in self.bot.voice_clients:
             if voice_client.is_connected():
                 await voice_client.disconnect(force=True)
                 logger.info(f"Disconnected from guild {voice_client.guild.id}")
-        
+
         logger.info("Music cog cleanup complete")
 
     # -------------------------------------------------------------------------
@@ -61,7 +60,7 @@ class Music(commands.Cog):
 
     def _ensure_voice_state(self, ctx: commands.Context) -> discord.VoiceState:
         """Ensure user is in a voice channel.
-        
+
         Raises:
             NotInVoiceChannelError: If user is not in a voice channel
         """
@@ -75,7 +74,7 @@ class Music(commands.Cog):
 
     def _ensure_same_channel(self, ctx: commands.Context, voice_client: discord.VoiceClient) -> None:
         """Ensure user and bot are in the same voice channel.
-        
+
         Raises:
             DifferentVoiceChannelError: If user and bot are in different channels
         """
@@ -89,17 +88,17 @@ class Music(commands.Cog):
 
     async def _ensure_voice_connection(self, ctx: commands.Context) -> discord.VoiceClient:
         """Ensure bot is connected to the user's voice channel.
-        
+
         Returns:
             The voice client for the connection
-            
+
         Raises:
             NotInVoiceChannelError: If user is not in a voice channel
             VoiceConnectionError: If bot cannot connect
         """
         voice_state = self._ensure_voice_state(ctx)
         channel = voice_state.channel
-        
+
         # Check permissions
         if not await self._check_voice_permissions(channel):
             embed = create_embed(
@@ -109,9 +108,9 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             raise commands.BotMissingPermissions(["connect", "speak"])
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if voice_client:
             # Already connected, ensure same channel
             if voice_client.channel != channel:
@@ -121,7 +120,7 @@ class Music(commands.Cog):
             # Connect to channel
             voice_client = await channel.connect()
             logger.info(f"Connected to voice channel: {channel.name} in guild {ctx.guild.id}")
-        
+
         return voice_client
 
     def _cancel_idle_task(self, guild_id: int) -> None:
@@ -146,7 +145,7 @@ class Music(commands.Cog):
         """Play the next song in the queue (callback for after playback)."""
         # Cancel idle task since we're about to play
         self._cancel_idle_task(guild_id)
-        
+
         # Schedule the async play_next in the event loop
         asyncio.run_coroutine_threadsafe(
             self._async_play_next(guild_id),
@@ -159,13 +158,13 @@ class Music(commands.Cog):
             guild = self.bot.get_guild(guild_id)
             if not guild:
                 return
-            
+
             voice_client = self._get_voice_client(guild)
             if not voice_client or not voice_client.is_connected():
                 return
-            
+
             queue = self.queue_manager.get_queue(guild_id)
-            
+
             # Handle loop mode
             if queue.loop_mode == LoopMode.SONG and queue.current:
                 # Replay current song
@@ -173,7 +172,7 @@ class Music(commands.Cog):
             else:
                 # Get next song
                 song = await queue.next()
-                
+
                 # Check if queue is empty
                 if song is None:
                     # Queue is empty, start idle timer
@@ -183,7 +182,7 @@ class Music(commands.Cog):
                         self._idle_disconnect(guild_id, timeout)
                     )
                     return
-            
+
             raw_data = {
                 'title': song.title,
                 'url': song.url,
@@ -226,15 +225,15 @@ class Music(commands.Cog):
                     # Try to play next song
                     self._play_next(guild_id)
                     return
-            
+
             # Play the song
             voice_client.play(
                 audio_source,
                 after=lambda e: self._handle_playback_error(e, guild_id)
             )
-            
+
             logger.info(f"Now playing: {song.title} in guild {guild_id}")
-            
+
             # Record in database
             await self.db.log_music_play(
                 guild_id=guild_id,
@@ -243,7 +242,7 @@ class Music(commands.Cog):
                 song_url=song.webpage_url,
                 song_duration=song.duration
             )
-            
+
         except Exception as e:
             logger.error(f"Error in _async_play_next for guild {guild_id}: {e}", exc_info=True)
 
@@ -251,7 +250,7 @@ class Music(commands.Cog):
         """Handle errors during playback and advance queue."""
         if error:
             logger.error(f"Playback error in guild {guild_id}: {error}")
-        
+
         # Always try to play next song
         self._play_next(guild_id)
 
@@ -266,17 +265,17 @@ class Music(commands.Cog):
     async def join(self, ctx: commands.Context):
         """Join the voice channel you're in."""
         await defer_hybrid(ctx)
-        
+
         try:
             voice_client = await self._ensure_voice_connection(ctx)
-            
+
             embed = create_embed(
                 title="🎵 Joined Voice Channel",
                 description=f"Connected to {voice_client.channel.mention}",
                 color=discord.Color.green().value
             )
             await send_hybrid_message(ctx, embed=embed)
-            
+
         except NotInVoiceChannelError as e:
             embed = create_embed(
                 title="❌ Not in Voice Channel",
@@ -293,9 +292,9 @@ class Music(commands.Cog):
     async def leave(self, ctx: commands.Context):
         """Leave the voice channel and clear the queue."""
         await defer_hybrid(ctx)
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if not voice_client:
             embed = create_embed(
                 title="❌ Not in Voice",
@@ -304,14 +303,14 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             return
-        
+
         # Clear queue and disconnect
         self.queue_manager.remove_queue(ctx.guild.id)
         self._cancel_idle_task(ctx.guild.id)
-        
+
         channel_name = voice_client.channel.name
         await voice_client.disconnect()
-        
+
         embed = create_embed(
             title="👋 Disconnected",
             description=f"Left {channel_name} and cleared the queue",
@@ -325,19 +324,19 @@ class Music(commands.Cog):
     )
     async def play(self, ctx: commands.Context, *, query: str):
         """Play a song from YouTube or add it to queue.
-        
+
         Args:
             query: Song name or YouTube URL to play
         """
         await defer_hybrid(ctx)
-        
+
         try:
             # Ensure voice connection
             voice_client = await self._ensure_voice_connection(ctx)
-            
+
             # Get or create queue
             queue = self.queue_manager.get_queue(ctx.guild.id)
-            
+
             # Extract song info
             try:
                 info = await YTDLSource.get_info(query)
@@ -349,7 +348,7 @@ class Music(commands.Cog):
                 )
                 await send_hybrid_message(ctx, embed=embed)
                 return
-            
+
             # Create Song object
             song = Song(
                 title=info['title'],
@@ -361,7 +360,7 @@ class Music(commands.Cog):
                 uploader=info.get('uploader'),
                 http_headers=info.get('http_headers')
             )
-            
+
             # Add to queue
             try:
                 position = await queue.add(song)
@@ -373,11 +372,11 @@ class Music(commands.Cog):
                 )
                 await send_hybrid_message(ctx, embed=embed)
                 return
-            
+
             # If nothing is playing, start playing
             if not voice_client.is_playing() and not voice_client.is_paused():
                 self._play_next(ctx.guild.id)
-                
+
                 embed = create_embed(
                     title="🎵 Now Playing",
                     description=f"[{song.title}]({song.webpage_url})",
@@ -401,9 +400,9 @@ class Music(commands.Cog):
                 embed.add_field(name="Position in Queue", value=f"#{position}", inline=True)
                 embed.add_field(name="Duration", value=self._format_duration(song.duration), inline=True)
                 embed.add_field(name="Requested by", value=song.requester.mention, inline=True)
-            
+
             await send_hybrid_message(ctx, embed=embed)
-            
+
         except NotInVoiceChannelError as e:
             embed = create_embed(
                 title="❌ Not in Voice Channel",
@@ -419,14 +418,14 @@ class Music(commands.Cog):
     async def pause(self, ctx: commands.Context):
         """Pause the currently playing song."""
         await defer_hybrid(ctx)
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if not voice_client or not voice_client.is_connected():
             raise BotNotInVoiceError()
-        
+
         self._ensure_same_channel(ctx, voice_client)
-        
+
         if voice_client.is_paused():
             embed = create_embed(
                 title="⏸️ Already Paused",
@@ -435,7 +434,7 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             return
-        
+
         if not voice_client.is_playing():
             embed = create_embed(
                 title="❌ Nothing Playing",
@@ -444,9 +443,9 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             return
-        
+
         voice_client.pause()
-        
+
         embed = create_embed(
             title="⏸️ Paused",
             description="Playback paused.",
@@ -461,14 +460,14 @@ class Music(commands.Cog):
     async def resume(self, ctx: commands.Context):
         """Resume the paused song."""
         await defer_hybrid(ctx)
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if not voice_client or not voice_client.is_connected():
             raise BotNotInVoiceError()
-        
+
         self._ensure_same_channel(ctx, voice_client)
-        
+
         if not voice_client.is_paused():
             embed = create_embed(
                 title="▶️ Not Paused",
@@ -477,9 +476,9 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             return
-        
+
         voice_client.resume()
-        
+
         embed = create_embed(
             title="▶️ Resumed",
             description="Playback resumed.",
@@ -494,14 +493,14 @@ class Music(commands.Cog):
     async def skip(self, ctx: commands.Context):
         """Skip the currently playing song."""
         await defer_hybrid(ctx)
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if not voice_client or not voice_client.is_connected():
             raise BotNotInVoiceError()
-        
+
         self._ensure_same_channel(ctx, voice_client)
-        
+
         if not voice_client.is_playing() and not voice_client.is_paused():
             embed = create_embed(
                 title="❌ Nothing Playing",
@@ -510,16 +509,16 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             return
-        
+
         queue = self.queue_manager.get_queue(ctx.guild.id)
         current_song = queue.current
-        
+
         voice_client.stop()  # This will trigger the after callback
-        
+
         skip_msg = "⏭️ Skipped"
         if current_song:
             skip_msg += f": {current_song.title}"
-        
+
         embed = create_embed(
             title="⏭️ Skipped",
             description=skip_msg,
@@ -534,21 +533,21 @@ class Music(commands.Cog):
     async def stop(self, ctx: commands.Context):
         """Stop playback and clear the queue."""
         await defer_hybrid(ctx)
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if not voice_client or not voice_client.is_connected():
             raise BotNotInVoiceError()
-        
+
         self._ensure_same_channel(ctx, voice_client)
-        
+
         # Clear queue and stop
         queue = self.queue_manager.get_queue(ctx.guild.id)
         await queue.clear()
-        
+
         if voice_client.is_playing() or voice_client.is_paused():
             voice_client.stop()
-        
+
         embed = create_embed(
             title="⏹️ Stopped",
             description="Playback stopped and queue cleared.",
@@ -562,19 +561,19 @@ class Music(commands.Cog):
     )
     async def volume(self, ctx: commands.Context, volume: int):
         """Set the playback volume.
-        
+
         Args:
             volume: Volume level (0-100)
         """
         await defer_hybrid(ctx)
-        
+
         voice_client = self._get_voice_client(ctx.guild)
-        
+
         if not voice_client or not voice_client.is_connected():
             raise BotNotInVoiceError()
-        
+
         self._ensure_same_channel(ctx, voice_client)
-        
+
         # Validate volume
         if not 0 <= volume <= 100:
             embed = create_embed(
@@ -584,15 +583,15 @@ class Music(commands.Cog):
             )
             await send_hybrid_message(ctx, embed=embed)
             return
-        
+
         # Set volume
         queue = self.queue_manager.get_queue(ctx.guild.id)
         queue.volume = volume / 100.0
-        
+
         # Update current source if playing
         if voice_client.source:
             voice_client.source.volume = queue.volume
-        
+
         embed = create_embed(
             title="🔊 Volume Changed",
             description=f"Volume set to {volume}%",
@@ -611,11 +610,11 @@ class Music(commands.Cog):
 
         if safe_seconds <= 0:
             return "Unknown"
-        
+
         hours = safe_seconds // 3600
         minutes = (safe_seconds % 3600) // 60
         secs = safe_seconds % 60
-        
+
         if hours > 0:
             return f"{hours:02d}:{minutes:02d}:{secs:02d}"
         else:

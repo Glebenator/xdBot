@@ -1,8 +1,10 @@
 # cogs/general.py
+
 import discord
-import random
 from discord.ext import commands
+
 import config
+
 
 class General(commands.Cog):
     def __init__(self, bot):
@@ -13,7 +15,7 @@ class General(commands.Cog):
         """Determine the category of a command based on its cog or name"""
         if not command.cog:
             return "General"
-            
+
         cog_name = command.cog.__class__.__name__
         if cog_name == "Fun":
             return "Fun & Games"
@@ -29,7 +31,7 @@ class General(commands.Cog):
             return "📈 Stock Market"
         else:
             return "Misc"
-        
+
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author == self.bot.user:
@@ -43,7 +45,7 @@ class General(commands.Cog):
     @commands.hybrid_command(name="help", description="Shows this help message")
     async def help(self, ctx, category_num: int = None):
         """Shows help information, optionally filtered by category number"""
-        
+
         # Get all commands and their categories
         categories = {}
         for command in self.bot.commands:
@@ -63,18 +65,18 @@ class General(commands.Cog):
                 description=f"List of {category.lower()} commands:",
                 color=discord.Color.blue()
             )
-            
+
             for command in sorted(commands, key=lambda x: x.name):
                 embed.add_field(
                     name=f"{config.settings.prefix}{command.name}",
                     value=command.description or "No description available",
                     inline=False
                 )
-            
+
             footer_text = f"Type {config.settings.prefix}help to see all categories"
             embed.set_footer(text=footer_text)
             await ctx.send(embed=embed)
-            
+
         else:
             # Show category overview
             embed = discord.Embed(
@@ -82,17 +84,17 @@ class General(commands.Cog):
                 description="Choose a category number to view specific commands:",
                 color=discord.Color.blue()
             )
-            
+
             for idx, (category, commands) in enumerate(category_list, 1):
                 embed.add_field(
                     name=f"{idx}. {category} ({len(commands)})",
                     value=f"Use `{config.settings.prefix}help {idx}` to view commands",
                     inline=True
                 )
-                
+
             footer_text = f"Example: {config.settings.prefix}help 1"
             embed.set_footer(text=footer_text)
-            
+
             await ctx.send(embed=embed)
 
 async def setup(bot):

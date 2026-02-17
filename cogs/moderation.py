@@ -1,11 +1,14 @@
 # cogs/moderation.py
+from datetime import datetime
+from typing import Optional
+
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
+
 from utils.db_handler import get_database_handler
+from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
 from utils.word_filter import WordFilter
-from typing import Optional
-from datetime import datetime
+
 
 class Moderation(commands.Cog):
     def __init__(self, bot):
@@ -30,7 +33,7 @@ class Moderation(commands.Cog):
 
         # Check message for tracked words
         found_words = self.word_filter.check_message(message.content)
-        
+
         if found_words:
             # Update database for each found word
             for word in found_words:
@@ -50,7 +53,7 @@ class Moderation(commands.Cog):
         # Delete the command message to keep the word private
         try:
             await ctx.message.delete()
-        except:
+        except Exception:
             pass
 
         if self.word_filter.add_word(word):
@@ -65,7 +68,7 @@ class Moderation(commands.Cog):
                 description="This word is already being tracked.",
                 color=discord.Color.yellow().value
             )
-        
+
         # Send response appropriately for the context
         await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
@@ -77,7 +80,7 @@ class Moderation(commands.Cog):
         # Delete the command message to keep the word private
         try:
             await ctx.message.delete()
-        except:
+        except Exception:
             pass
 
         if self.word_filter.remove_word(word):
@@ -92,7 +95,7 @@ class Moderation(commands.Cog):
                 description="This word was not being tracked.",
                 color=discord.Color.yellow().value
             )
-        
+
         # Send response appropriately for the context
         await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
@@ -107,7 +110,7 @@ class Moderation(commands.Cog):
             guild_id,
             target_user.id
         )
-        
+
         if not stats:
             await send_hybrid_message(
                 ctx,
@@ -143,7 +146,7 @@ class Moderation(commands.Cog):
             guild_id,
             word
         )
-        
+
         if not leaderboard:
             await send_hybrid_message(
                 ctx,
@@ -153,7 +156,7 @@ class Moderation(commands.Cog):
             return
 
         if word:
-            title = f"Leaderboard for specific word"
+            title = "Leaderboard for specific word"
             description = "Top users for tracked word:"
         else:
             title = "Overall Word Usage Leaderboard"
@@ -170,7 +173,7 @@ class Moderation(commands.Cog):
                 value = f"Count: {entry['usage_count']}\nLast used: {entry['last_used']}"
             else:
                 value = f"Total usage: {entry['total_count']}\nUnique words: {entry['unique_words']}"
-            
+
             embed.add_field(
                 name=f"{i}. {entry['username']}",
                 value=value,

@@ -3,10 +3,9 @@ import logging
 
 import discord
 from discord.ext import commands
+
 from utils.db_handler import get_database_handler
 from utils.helpers import defer_hybrid
-import config
-
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ class Admin(commands.Cog):
             await self.db.set_total_success(guild_id, user.id, user.display_name, new_points)
             points_removed = current_points - new_points
             await ctx.send(f"✅ Removed {points_removed} success points from {user.mention}. New total: {new_points}")
-            
+
         except Exception as e:
             logger.exception("Error in remove_points command", extra={"user_id": user.id, "guild_id": ctx.guild.id if ctx.guild else None})
             await ctx.send(f"❌ Error removing points: {str(e)}")
@@ -119,7 +118,7 @@ class Admin(commands.Cog):
             guild_id = self._require_guild(ctx)
             await self.db.reset_success_stats(guild_id, user.id)
             await self.db.update_user(guild_id, user.id, user.display_name)
-            
+
             await ctx.send(f"✅ Reset all success stats for {user.mention}")
         except Exception as e:
             await ctx.send(f"❌ Error resetting stats: {str(e)}")

@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from utils.polygon_handler import PolygonHandler
-
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ class StockMarketTool:
 
     def __init__(self, api_key: Optional[str] = None) -> None:
         """Initialize the stock market tool.
-        
+
         Args:
             api_key: Polygon.io API key
         """
@@ -31,7 +30,7 @@ class StockMarketTool:
 
     def get_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for this tool.
-        
+
         Returns:
             Dictionary containing the tool schema for LLM function calling
         """
@@ -55,7 +54,7 @@ class StockMarketTool:
 
     def get_search_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for stock search.
-        
+
         Returns:
             Dictionary containing the search tool schema
         """
@@ -79,7 +78,7 @@ class StockMarketTool:
 
     def get_market_status_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for market status.
-        
+
         Returns:
             Dictionary containing the market status tool schema
         """
@@ -95,10 +94,10 @@ class StockMarketTool:
                 }
             }
         }
-    
+
     def get_rsi_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for RSI indicator.
-        
+
         Returns:
             Dictionary containing the RSI tool schema
         """
@@ -124,10 +123,10 @@ class StockMarketTool:
                 }
             }
         }
-    
+
     def get_sma_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for SMA indicator.
-        
+
         Returns:
             Dictionary containing the SMA tool schema
         """
@@ -153,10 +152,10 @@ class StockMarketTool:
                 }
             }
         }
-    
+
     def get_ema_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for EMA indicator.
-        
+
         Returns:
             Dictionary containing the EMA tool schema
         """
@@ -182,10 +181,10 @@ class StockMarketTool:
                 }
             }
         }
-    
+
     def get_macd_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for MACD indicator.
-        
+
         Returns:
             Dictionary containing the MACD tool schema
         """
@@ -206,10 +205,10 @@ class StockMarketTool:
                 }
             }
         }
-    
+
     def get_golden_cross_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for golden cross detection.
-        
+
         Returns:
             Dictionary containing the golden cross tool schema
         """
@@ -233,7 +232,7 @@ class StockMarketTool:
 
     def get_all_tool_schemas(self) -> List[Dict[str, Any]]:
         """Get all available tool schemas for stock market operations.
-        
+
         Returns:
             List of tool schemas
         """
@@ -250,10 +249,10 @@ class StockMarketTool:
 
     async def get_stock_price(self, ticker: str) -> Dict[str, Any]:
         """Get stock price and market data for a ticker.
-        
+
         Args:
             ticker: Stock ticker symbol
-            
+
         Returns:
             Dictionary containing formatted stock data
         """
@@ -268,7 +267,7 @@ class StockMarketTool:
             try:
                 prev_data = await self.polygon.get_previous_close(ticker)
                 results = prev_data.get("results", [])
-                
+
                 if results:
                     result = results[0]
                     logger.info(f"Successfully fetched previous close data for {ticker}")
@@ -287,7 +286,7 @@ class StockMarketTool:
             except Exception as prev_error:
                 # If previous close fails, try snapshot (for paid plans)
                 logger.debug(f"Previous close failed for {ticker}, trying snapshot: {prev_error}")
-                
+
                 try:
                     data = await self.polygon.get_snapshot(ticker)
                     ticker_data = data.get("ticker", {})
@@ -317,7 +316,7 @@ class StockMarketTool:
                     logger.debug(f"Snapshot also failed for {ticker}: {snap_error}")
                     # Both failed, raise the original error
                     raise prev_error
-            
+
             # If we get here, no data was found
             return {
                 "error": f"No data found for ticker {ticker.upper()}",
@@ -326,7 +325,7 @@ class StockMarketTool:
 
         except Exception as e:
             logger.error(f"Error fetching stock price for {ticker}: {e}")
-            
+
             # Provide helpful error message based on error type
             error_str = str(e)
             if "403" in error_str or "Forbidden" in error_str:
@@ -343,10 +342,10 @@ class StockMarketTool:
 
     async def search_stocks(self, query: str) -> Dict[str, Any]:
         """Search for stock tickers.
-        
+
         Args:
             query: Search query (company name or partial ticker)
-            
+
         Returns:
             Dictionary containing search results
         """
@@ -391,7 +390,7 @@ class StockMarketTool:
 
     async def get_market_status(self) -> Dict[str, Any]:
         """Get current market status.
-        
+
         Returns:
             Dictionary containing market status information
         """
@@ -421,14 +420,14 @@ class StockMarketTool:
             return {
                 "error": f"Failed to fetch market status: {str(e)}"
             }
-    
+
     async def get_stock_rsi(self, ticker: str, window: int = 14) -> Dict[str, Any]:
         """Get RSI indicator for a stock.
-        
+
         Args:
             ticker: Stock ticker symbol
             window: RSI period (default 14)
-            
+
         Returns:
             Dictionary containing RSI data and interpretation
         """
@@ -479,14 +478,14 @@ class StockMarketTool:
                 "error": f"Failed to fetch RSI for {ticker.upper()}: {str(e)}",
                 "ticker": ticker.upper()
             }
-    
+
     async def get_stock_sma(self, ticker: str, window: int = 50) -> Dict[str, Any]:
         """Get SMA indicator for a stock.
-        
+
         Args:
             ticker: Stock ticker symbol
             window: SMA period (default 50)
-            
+
         Returns:
             Dictionary containing SMA data and interpretation
         """
@@ -543,14 +542,14 @@ class StockMarketTool:
                 "error": f"Failed to fetch SMA for {ticker.upper()}: {str(e)}",
                 "ticker": ticker.upper()
             }
-    
+
     async def get_stock_ema(self, ticker: str, window: int = 50) -> Dict[str, Any]:
         """Get EMA indicator for a stock.
-        
+
         Args:
             ticker: Stock ticker symbol
             window: EMA period (default 50)
-            
+
         Returns:
             Dictionary containing EMA data and interpretation
         """
@@ -607,13 +606,13 @@ class StockMarketTool:
                 "error": f"Failed to fetch EMA for {ticker.upper()}: {str(e)}",
                 "ticker": ticker.upper()
             }
-    
+
     async def get_stock_macd(self, ticker: str) -> Dict[str, Any]:
         """Get MACD indicator for a stock.
-        
+
         Args:
             ticker: Stock ticker symbol
-            
+
         Returns:
             Dictionary containing MACD data and interpretation
         """
@@ -679,13 +678,13 @@ class StockMarketTool:
                 "error": f"Failed to fetch MACD for {ticker.upper()}: {str(e)}",
                 "ticker": ticker.upper()
             }
-    
+
     async def detect_golden_cross(self, ticker: str) -> Dict[str, Any]:
         """Detect golden cross or death cross pattern.
-        
+
         Args:
             ticker: Stock ticker symbol
-            
+
         Returns:
             Dictionary containing crossover detection and analysis
         """
@@ -694,38 +693,38 @@ class StockMarketTool:
                 "error": "Stock market data is not configured",
                 "ticker": ticker.upper()
             }
-        
+
         try:
             # Fetch both SMAs with history
             sma_50_data = await self.polygon.get_sma(ticker, window=50, limit=10)
             sma_200_data = await self.polygon.get_sma(ticker, window=200, limit=10)
-            
+
             sma_50_results = sma_50_data.get("results", {}).get("values", [])
             sma_200_results = sma_200_data.get("results", {}).get("values", [])
-            
+
             if not sma_50_results or not sma_200_results:
                 return {
                     "error": f"Insufficient SMA data for {ticker.upper()}. Stock may be too new.",
                     "ticker": ticker.upper()
                 }
-            
+
             if len(sma_50_results) < 2 or len(sma_200_results) < 2:
                 return {
                     "error": f"Need more historical data to detect crossovers for {ticker.upper()}",
                     "ticker": ticker.upper()
                 }
-            
+
             # Get current and previous values
             current_50 = sma_50_results[-1].get("value", 0)
             current_200 = sma_200_results[-1].get("value", 0)
             previous_50 = sma_50_results[-2].get("value", 0)
             previous_200 = sma_200_results[-2].get("value", 0)
-            
+
             # Detect crossover
             crossover = None
             signal = None
             interpretation = ""
-            
+
             # Golden cross: 50 SMA crosses above 200 SMA
             if previous_50 <= previous_200 and current_50 > current_200:
                 crossover = "GOLDEN_CROSS"
@@ -747,7 +746,7 @@ class StockMarketTool:
                 signal = "BEARISH"
                 distance_pct = ((current_200 - current_50) / current_200) * 100
                 interpretation = f"📉 Bearish alignment: 50-day SMA is {distance_pct:.2f}% below 200-day SMA. Downtrend confirmed, but no recent crossover."
-            
+
             return {
                 "ticker": ticker.upper(),
                 "sma_50": round(current_50, 2),
@@ -757,7 +756,7 @@ class StockMarketTool:
                 "interpretation": interpretation,
                 "alignment": "bullish" if current_50 > current_200 else "bearish"
             }
-            
+
         except Exception as e:
             logger.error(f"Error detecting golden cross for {ticker}: {e}")
             return {
@@ -767,11 +766,11 @@ class StockMarketTool:
 
     async def execute_tool_call(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool call based on function name and arguments.
-        
+
         Args:
             function_name: Name of the function to call
             arguments: Arguments for the function
-            
+
         Returns:
             Result of the function call
         """
@@ -807,10 +806,10 @@ class StockMarketTool:
 
     def format_price_response(self, data: Dict[str, Any]) -> str:
         """Format stock price data for display in chat.
-        
+
         Args:
             data: Stock price data dictionary
-            
+
         Returns:
             Formatted string response
         """
@@ -830,10 +829,10 @@ class StockMarketTool:
 
     def format_search_response(self, data: Dict[str, Any]) -> str:
         """Format stock search results for display in chat.
-        
+
         Args:
             data: Search results dictionary
-            
+
         Returns:
             Formatted string response
         """
@@ -852,10 +851,10 @@ class StockMarketTool:
 
     def format_market_status_response(self, data: Dict[str, Any]) -> str:
         """Format market status for display in chat.
-        
+
         Args:
             data: Market status dictionary
-            
+
         Returns:
             Formatted string response
         """
@@ -866,13 +865,13 @@ class StockMarketTool:
         emoji = "🟢" if status == "open" else "🔴" if status == "closed" else "🟡"
 
         return f"{emoji} Market is **{status.upper()}** | NYSE: {data.get('nyse', 'N/A')} | NASDAQ: {data.get('nasdaq', 'N/A')}"
-    
+
     def format_rsi_response(self, data: Dict[str, Any]) -> str:
         """Format RSI data for display in chat.
-        
+
         Args:
             data: RSI data dictionary
-            
+
         Returns:
             Formatted string response
         """
@@ -893,13 +892,13 @@ class StockMarketTool:
             emoji = "🟡"
 
         return f"📊 **{ticker}** RSI ({data.get('window', 14)}-day): **{rsi:.2f}** {emoji}\n{signal.capitalize()}: {interpretation}"
-    
+
     def format_sma_response(self, data: Dict[str, Any]) -> str:
         """Format SMA data for display in chat.
-        
+
         Args:
             data: SMA data dictionary
-            
+
         Returns:
             Formatted string response
         """
@@ -916,13 +915,13 @@ class StockMarketTool:
         sign = "+" if distance >= 0 else ""
 
         return f"📊 **{ticker}** SMA ({data.get('window', 50)}-day): ${sma:.2f}\nCurrent Price: ${current_price:.2f} ({sign}{distance:.2f}%) {emoji}\n{signal.capitalize()}: {data.get('interpretation', '')}"
-    
+
     def format_ema_response(self, data: Dict[str, Any]) -> str:
         """Format EMA data for display in chat.
-        
+
         Args:
             data: EMA data dictionary
-            
+
         Returns:
             Formatted string response
         """
@@ -939,13 +938,13 @@ class StockMarketTool:
         sign = "+" if distance >= 0 else ""
 
         return f"📊 **{ticker}** EMA ({data.get('window', 50)}-day): ${ema:.2f}\nCurrent Price: ${current_price:.2f} ({sign}{distance:.2f}%) {emoji}\n{signal.capitalize()}: {data.get('interpretation', '')}"
-    
+
     def format_macd_response(self, data: Dict[str, Any]) -> str:
         """Format MACD data for display in chat.
-        
+
         Args:
             data: MACD data dictionary
-            
+
         Returns:
             Formatted string response
         """

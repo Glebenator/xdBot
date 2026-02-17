@@ -1,8 +1,8 @@
 # main.py
 import ast
-import os
-import logging
 import asyncio
+import logging
+import os
 import signal
 
 import discord
@@ -41,7 +41,7 @@ class DiscordBot(commands.Bot):
             intents=intents,
             help_command=None  # We can create a custom help command later
         )
-        
+
     async def setup_hook(self):
         await load_extensions(self)
         try:
@@ -55,7 +55,7 @@ class DiscordBot(commands.Bot):
             return
         logger.info("%s has connected to Discord!", self.user)
         logger.info("Bot is in %s guilds", len(self.guilds))
-        
+
         # Set custom status
         await self.change_presence(
             activity=discord.Activity(

@@ -1,10 +1,12 @@
 # cogs/replies.py
-import discord
-from discord.ext import commands
-from typing import Dict, List, Union, Tuple
 import json
 import logging
 import os
+from typing import Dict
+
+import discord
+from discord.ext import commands
+
 from utils.helpers import create_embed, defer_hybrid
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ class Replies(commands.Cog):
                 json.dump(self.replies, f, indent=4)
         except Exception:
             logger.exception("Failed to save replies to data/replies.json")
-        
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Listen for messages and respond with text and/or reactions"""
@@ -47,7 +49,7 @@ class Replies(commands.Cog):
         if content == "ah":
             await message.channel.send("Whatever")
             return
-        
+
         for trigger, reply_data in self.replies.items():
             if trigger.lower() in content:
                 # Add reactions
@@ -57,7 +59,7 @@ class Replies(commands.Cog):
                             await message.add_reaction(reaction)
                         except discord.errors.HTTPException:
                             continue  # Skip invalid emoji
-                
+
                 # Send text response if it exists
                 if "response" in reply_data and reply_data["response"]:
                     # Replace {user} with user mention
@@ -70,7 +72,7 @@ class Replies(commands.Cog):
     async def add_reply(self, ctx, trigger: str, response: str = None, reactions: str = None) -> None:
         """
         Add a new trigger word with response and/or reactions
-        
+
         Parameters:
         -----------
         trigger: str
@@ -84,7 +86,7 @@ class Replies(commands.Cog):
         reaction_list = []
         if reactions:
             reaction_list = [r.strip() for r in reactions.split(",")]
-            
+
         if not response and not reaction_list:
             await ctx.send("You must provide either a response message or reactions!")
             return
@@ -94,7 +96,7 @@ class Replies(commands.Cog):
             "reactions": reaction_list
         }
         self.save_replies()
-        
+
         embed = create_embed(
             title="New Auto-Reply Added",
             description=f"Trigger: {trigger}\nResponse: {response}\nReactions: {' '.join(reaction_list)}",
@@ -111,7 +113,7 @@ class Replies(commands.Cog):
         if trigger in self.replies:
             reply_data = self.replies.pop(trigger)
             self.save_replies()
-            
+
             embed = create_embed(
                 title="Auto-Reply Removed",
                 description=f"Trigger: {trigger}\nResponse: {reply_data.get('response', 'None')}\nReactions: {' '.join(reply_data.get('reactions', []))}",
@@ -123,7 +125,7 @@ class Replies(commands.Cog):
                 description=f"Trigger '{trigger}' not found in replies",
                 color=discord.Color.red().value
             )
-        
+
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="addreaction", description="Add a reaction-only trigger")
@@ -131,7 +133,7 @@ class Replies(commands.Cog):
     async def add_reaction_only(self, ctx, trigger: str, reactions: str) -> None:
         """
         Add a new trigger that only adds reactions, no text response
-        
+
         Parameters:
         -----------
         trigger: str
@@ -141,7 +143,7 @@ class Replies(commands.Cog):
         """
         await defer_hybrid(ctx)
         reaction_list = [r.strip() for r in reactions.split(",")]
-            
+
         if not reaction_list:
             await ctx.send("You must provide at least one reaction!")
             return
@@ -151,7 +153,7 @@ class Replies(commands.Cog):
             "reactions": reaction_list
         }
         self.save_replies()
-        
+
         embed = create_embed(
             title="New Reaction Trigger Added",
             description=f"Trigger: {trigger}\nReactions: {' '.join(reaction_list)}",
@@ -168,7 +170,7 @@ class Replies(commands.Cog):
             description="Here are all the current auto-replies:",
             color=discord.Color.blue().value
         )
-        
+
         for trigger, reply_data in self.replies.items():
             value = f"Response: {reply_data.get('response', 'No text response')}\nReactions: {' '.join(reply_data.get('reactions', []))}"
             embed.add_field(
@@ -176,7 +178,7 @@ class Replies(commands.Cog):
                 value=value,
                 inline=False
             )
-        
+
         await ctx.send(embed=embed)
 
 async def setup(bot):

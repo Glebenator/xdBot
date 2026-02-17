@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -149,7 +148,7 @@ class LLMHandler:
         self._session: Optional[aiohttp.ClientSession] = None
         self._lock = asyncio.Lock()
         self._last_cleanup = datetime.now()
-        
+
         # Initialize search tool if API key is available
         self._search_tool: Optional[Any] = None
         if tavily_api_key:
@@ -160,18 +159,18 @@ class LLMHandler:
         """Register or replace a model configuration under a logical key."""
 
         self.model_configs[key] = config
-    
+
     def get_available_tools_schemas(self) -> List[Dict[str, Any]]:
         """Get all available tool schemas for function calling.
-        
+
         Returns:
             List of tool schemas that can be passed to LLM
         """
         schemas = []
-        
+
         if self._search_tool:
             schemas.append(self._search_tool.get_tool_schema())
-        
+
         return schemas
 
     def list_model_keys(self) -> List[str]:
@@ -194,7 +193,7 @@ class LLMHandler:
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
-        
+
         if self._search_tool:
             await self._search_tool.close()
 
@@ -286,24 +285,24 @@ class LLMHandler:
 
     def _create_tool_guidance_message(self, tools: List[Dict[str, Any]]) -> str:
         """Create a system message to guide the model on proper tool usage.
-        
+
         Args:
             tools: List of available tool definitions
-            
+
         Returns:
             System message content with tool usage guidance
         """
         tool_names = []
-        
+
         for tool in tools:
             function = tool.get("function", {})
             name = function.get("name", "")
             tool_names.append(name)
-        
+
         guidance_parts = [
             "You are a helpful AI assistant with access to a web search tool.",
         ]
-        
+
         # Add guidance for search tool if available
         if "tavily_search" in tool_names:
             guidance_parts.append(
@@ -318,14 +317,14 @@ class LLMHandler:
                 "\n  • 'Who won the latest election?' → use tavily_search"
                 "\n  • 'What's the current weather forecast?' → use tavily_search"
             )
-        
+
         guidance_parts.append(
             "\nGeneral Rules:"
             "\n- Use the search tool when you need current or real-time information"
             "\n- Provide clear, helpful responses based on the search results"
             "\n- If the search doesn't return useful results, acknowledge this and provide what help you can"
         )
-        
+
         return "\n".join(guidance_parts)
 
     async def generate_response(
@@ -345,7 +344,7 @@ class LLMHandler:
         model_config = self.model_configs.get(model_key)
         if model_config is None:
             raise LLMRequestError(f"Unknown model key: {model_key}", retryable=False)
-        
+
         # Prepare tools - use provided tools or get from config
         # Skip tools entirely if the model doesn't support them
         if not model_config.supports_tools:
@@ -353,22 +352,22 @@ class LLMHandler:
             tool_choice_payload = None
         else:
             tools_payload = tools if tools is not None else model_config.tools
-            
+
             # If no tools specified, gather all available tools
             if tools_payload is None:
                 available_tools = []
-                
+
                 # Add search tool
                 if self._search_tool:
                     if model_config.provider is ProviderType.OLLAMA:
                         available_tools.append(self._search_tool.get_ollama_tool_definition())
                     else:
                         available_tools.append(self._search_tool.get_tool_definition())
-                
+
                 # Only use tools if we have any available
                 if available_tools:
                     tools_payload = available_tools
-            
+
             tool_choice_payload = tool_choice if tool_choice is not None else model_config.tool_choice
 
         metrics = RequestMetrics(
@@ -383,16 +382,16 @@ class LLMHandler:
 
         history_messages = self._get_history_messages(user_id, model_key)
         request_messages = [msg.to_dict() for msg in history_messages]
-        
+
         # Add system message for tool guidance if tools are available
         if tools_payload:
             system_guidance = self._create_tool_guidance_message(tools_payload)
             # Insert system message at the beginning if not already present
             if not request_messages or request_messages[0].get("role") != "system":
                 request_messages.insert(0, {"role": "system", "content": system_guidance})
-        
+
         request_messages.append({"role": "user", "content": message})
-        
+
         # Track the original user message
         original_user_message = message
         tool_iterations = 0
@@ -424,14 +423,14 @@ class LLMHandler:
                         },
                     )
                     logger.debug(f"Tool calls details: {json.dumps(response.tool_calls, indent=2)}")
-                    
+
                     # Add assistant's response with tool calls to messages
                     request_messages.append({
                         "role": "assistant",
                         "content": response.content,
                         "tool_calls": response.tool_calls,
                     })
-                    
+
                     # Execute each tool call
                     for idx, tool_call in enumerate(response.tool_calls, 1):
                         logger.info(
@@ -443,14 +442,14 @@ class LLMHandler:
                         )
                         tool_result = await self._execute_tool_call(tool_call)
                         logger.debug(f"Tool call {idx} result preview: {tool_result[:200]}...")
-                        
+
                         request_messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.get("id"),
                             "name": tool_call.get("function", {}).get("name"),
                             "content": tool_result,
                         })
-                    
+
                     # Make another request with tool results
                     logger.info(
                         "Sending tool results back to model",
@@ -570,7 +569,7 @@ class LLMHandler:
             function_name = tool_call.get("function", {}).get("name")
             arguments_str = tool_call.get("function", {}).get("arguments", "{}")
             tool_call_id = tool_call.get("id", "unknown")
-            
+
             logger.info(
                 "Executing tool call",
                 extra={
@@ -579,7 +578,7 @@ class LLMHandler:
                     "arguments_raw": arguments_str,
                 },
             )
-            
+
             # Parse arguments
             try:
                 if isinstance(arguments_str, str):
@@ -613,18 +612,18 @@ class LLMHandler:
                     exc_info=True,
                 )
                 return f"Error: Invalid tool arguments format - {exc}"
-            
+
             # Execute the appropriate tool
             if function_name == "tavily_search":
                 if not self._search_tool:
                     logger.warning("Search tool requested but Tavily API key not configured")
                     return "Error: Search tool is not available (Tavily API key not configured)"
-                
+
                 query = arguments.get("query", "")
                 max_results = arguments.get("max_results", 5)
                 search_depth = arguments.get("search_depth", "basic")
                 topic = arguments.get("topic", "general")
-                
+
                 logger.info(
                     "Executing Tavily search",
                     extra={
@@ -634,7 +633,7 @@ class LLMHandler:
                         "topic": topic,
                     },
                 )
-                
+
                 search_results = await self._search_tool.search(
                     query=query,
                     max_results=max_results,
@@ -642,7 +641,7 @@ class LLMHandler:
                     topic=topic,
                     include_answer=True,
                 )
-                
+
                 formatted_results = self._search_tool.format_search_results(search_results)
                 logger.info(
                     "Search completed",
@@ -653,13 +652,13 @@ class LLMHandler:
                     },
                 )
                 logger.debug(f"Formatted search results for LLM: {formatted_results[:500]}...")
-                
+
                 return formatted_results
-            
+
             else:
                 logger.warning(f"Unknown tool function requested: {function_name}")
                 return f"Error: Unknown tool function: {function_name}"
-                
+
         except Exception as exc:
             logger.error(
                 "Error executing tool call",
@@ -718,7 +717,7 @@ class LLMHandler:
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> LLMResponse:
         session = await self.get_session()
-        
+
         # Ollama supports tools in the /api/chat endpoint
         if tools:
             # Use chat endpoint for tool support
@@ -735,9 +734,9 @@ class LLMHandler:
                     **config.options,
                 },
             }
-            
+
             endpoint = f"{self.base_url}/api/chat"
-            
+
             logger.info(
                 "Ollama API Request (chat with tools)",
                 extra={
@@ -749,7 +748,7 @@ class LLMHandler:
                 },
             )
             logger.debug(f"Ollama chat request payload: {json.dumps(payload, indent=2)}")
-            
+
             timeout = aiohttp.ClientTimeout(total=config.timeout)
             async with session.post(
                 endpoint,
@@ -757,7 +756,7 @@ class LLMHandler:
                 timeout=timeout,
             ) as response:
                 response_status = response.status
-                
+
                 if response.status != 200:
                     response_text = await response.text()
                     logger.error(
@@ -777,7 +776,7 @@ class LLMHandler:
 
                 result = await response.json()
                 logger.debug(f"Ollama chat raw response: {json.dumps(result, indent=2)}")
-                
+
                 message_data = result.get("message", {})
                 generated_text = (message_data.get("content") or "").strip()
                 tool_calls = message_data.get("tool_calls")
@@ -810,7 +809,7 @@ class LLMHandler:
         else:
             # Use generate endpoint for simple text completion (backward compatibility)
             prompt = self._format_ollama_prompt(messages)
-            
+
             payload = {
                 "model": config.model_name,
                 "prompt": prompt,
@@ -825,7 +824,7 @@ class LLMHandler:
             }
 
             endpoint = f"{self.base_url}/api/generate"
-            
+
             logger.info(
                 "Ollama API Request (generate)",
                 extra={
@@ -844,7 +843,7 @@ class LLMHandler:
                 timeout=timeout,
             ) as response:
                 response_status = response.status
-                
+
                 if response.status != 200:
                     response_text = await response.text()
                     logger.error(
@@ -864,7 +863,7 @@ class LLMHandler:
 
                 result = await response.json()
                 logger.debug(f"Ollama generate raw response: {json.dumps(result, indent=2)}")
-                
+
                 generated_text = result.get("response", "")
                 generated_text = (generated_text or "").strip()
 
@@ -958,7 +957,7 @@ class LLMHandler:
             timeout=timeout,
         ) as response:
             response_status = response.status
-            
+
             if response.status != 200:
                 response_text = await response.text()
                 logger.error(
@@ -978,7 +977,7 @@ class LLMHandler:
 
             result = await response.json()
             logger.debug(f"OpenRouter raw response: {json.dumps(result, indent=2)}")
-            
+
             choices = result.get("choices") or []
             if not choices:
                 logger.error(

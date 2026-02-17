@@ -1,6 +1,8 @@
 # utils/helpers.py
 from typing import Optional
+
 import discord
+
 
 def create_embed(
     title: str,

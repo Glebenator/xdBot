@@ -2,8 +2,7 @@
 import json
 import logging
 import os
-from typing import Set, Dict, List
-
+from typing import List, Set
 
 logger = logging.getLogger(__name__)
 

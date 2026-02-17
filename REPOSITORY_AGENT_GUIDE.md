@@ -124,7 +124,9 @@ These are useful smoke/regression entry points before deeper refactors.
 
 1. Environment prep:
 - Create venv, install `requirements.txt`.
+- For local quality tooling, also install `requirements-dev.txt`.
 - Provide `.env` with at minimum `DISCORD_TOKEN`.
+- Start from `.env.example`.
 - Add optional keys based on target feature work.
 
 2. Fast validation:
@@ -151,17 +153,24 @@ These are useful smoke/regression entry points before deeper refactors.
 - Stock subsystem has refactored service/model/analyzer/embed layers and includes a golden-cross detector path.
 - Historical markdown files were progress logs; code should be treated as source of truth.
 
-## Suggested Next Technical Hardening for Agentic Coding
+## Current Quality Tooling
 
-- Add one canonical `make`/task runner entry for:
-  - setup
-  - lint/type check
-  - test subsets
-  - run
-- Add CI for syntax + tests to reduce agent regression risk.
-- Add `.env.example` reflecting actual `config.py` keys.
+- `Makefile` commands:
+  - `make install`
+  - `make install-dev`
+  - `make run`
+  - `make compile`
+  - `make lint`
+  - `make test`
+  - `make check`
+- CI workflow: `.github/workflows/ci.yml`
+  - compile check
+  - ruff lint
+  - pytest run
+
+## Suggested Next Technical Hardening
+
 - Add test coverage for:
   - extension auto-discovery behavior
   - LLM model-key persistence paths
   - music queue transitions and idle disconnect timing
-

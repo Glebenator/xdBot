@@ -39,30 +39,30 @@ MIXED_QUERIES = [
 
 def print_test_guide():
     """Print a guide for manual testing."""
-    
+
     print("=" * 70)
     print("STOCK MARKET TOOL SELECTION - MANUAL TEST GUIDE")
     print("=" * 70)
     print()
-    
+
     print("📊 STOCK TOOL QUERIES (Should use get_stock_price/search_stocks/get_market_status)")
     print("-" * 70)
     for i, query in enumerate(STOCK_QUERIES, 1):
         print(f"{i:2d}. @Bot {query}")
     print()
-    
+
     print("🔍 SEARCH TOOL QUERIES (Should use tavily_search)")
     print("-" * 70)
     for i, query in enumerate(SEARCH_QUERIES, 1):
         print(f"{i:2d}. @Bot {query}")
     print()
-    
+
     print("🔄 MIXED QUERIES (Should use BOTH tools)")
     print("-" * 70)
     for i, query in enumerate(MIXED_QUERIES, 1):
         print(f"{i:2d}. @Bot {query}")
     print()
-    
+
     print("=" * 70)
     print("VERIFICATION STEPS:")
     print("=" * 70)

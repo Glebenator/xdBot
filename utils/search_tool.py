@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import aiohttp
-
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +66,6 @@ class TavilySearchTool:
         session = await self.get_session()
         url = f"{self.base_url}/search"
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key[:10]}...{self.api_key[-4:]}",  # Masked for logging
-            "Content-Type": "application/json",
-        }
-
         payload = {
             "query": query,
             "max_results": min(max(0, max_results), 20),
@@ -103,7 +97,7 @@ class TavilySearchTool:
                 },
             ) as response:
                 response_status = response.status
-                
+
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error(
@@ -120,7 +114,7 @@ class TavilySearchTool:
                     )
 
                 result = await response.json()
-                
+
                 # Log successful response
                 logger.info(
                     "Tavily API Response",
@@ -133,7 +127,7 @@ class TavilySearchTool:
                     },
                 )
                 logger.debug(f"Tavily API Raw Response: {result}")
-                
+
                 return result
 
         except aiohttp.ClientError as exc:

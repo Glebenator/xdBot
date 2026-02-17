@@ -9,7 +9,6 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 
 import aiosqlite
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -699,7 +698,7 @@ class DatabaseHandler:
         async with self._connect() as conn:
             async with conn.execute(
                 """
-                SELECT 
+                SELECT
                     u.total_success,
                     u.success_streak,
                     u.last_success_check,
@@ -735,7 +734,7 @@ class DatabaseHandler:
         async with self._connect() as conn:
             async with conn.execute(
                 """
-                SELECT 
+                SELECT
                     u.username,
                     COALESCE(u.total_success, 0) AS total_success,
                     COALESCE(u.success_streak, 0) AS success_streak,
@@ -945,7 +944,7 @@ class DatabaseHandler:
         song_duration: int = 0,
     ) -> None:
         """Log a song play to music history.
-        
+
         Args:
             guild_id: Discord guild ID
             user_id: Discord user ID
@@ -970,12 +969,12 @@ class DatabaseHandler:
         self, guild_id: int, user_id: int, limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get a user's music listening statistics.
-        
+
         Args:
             guild_id: Discord guild ID
             user_id: Discord user ID
             limit: Maximum number of results
-            
+
         Returns:
             List of most played songs with play counts
         """
@@ -999,11 +998,11 @@ class DatabaseHandler:
         self, guild_id: int, limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get the most played songs in a guild.
-        
+
         Args:
             guild_id: Discord guild ID
             limit: Maximum number of results
-            
+
         Returns:
             List of top songs with play counts
         """

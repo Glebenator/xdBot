@@ -1,19 +1,21 @@
 # cogs/llm.py
+import asyncio
+import logging
+from typing import Dict, List, Optional, Set
+
 import discord
 from discord.ext import commands
-from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
-from utils.ollama_handler import LLMHandler, ModelConfig, ProviderType
-from utils.db_handler import get_database_handler
-from typing import Optional, List, Set, Dict
-import logging
-import asyncio
 
 import config
+from utils.db_handler import get_database_handler
+from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
+from utils.ollama_handler import LLMHandler, ModelConfig, ProviderType
+
 
 class LLM(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        
+
         # Initialize LLM handler with available providers
         self.llm_handler = LLMHandler(
             base_url=config.settings.ollama_url,
@@ -23,12 +25,12 @@ class LLM(commands.Cog):
             openrouter_app_name=config.settings.openrouter_app_name,
             tavily_api_key=config.settings.tavily_api_key,
         )
-        
+
         self._background_tasks: Set[asyncio.Task] = set()
         self.db = get_database_handler()
         self.default_chat_model_key = 'chat'
         self.guild_chat_model_cache: Dict[int, str] = {}
-        
+
         # Register models with specific configurations
         self.model_configs = {
             'chat': ModelConfig(
@@ -163,23 +165,23 @@ class LLM(commands.Cog):
         """Split text into chunks while preserving word boundaries"""
         chunks = []
         current_chunk = ""
-        
+
         for word in text.split():
             if len(current_chunk) + len(word) + 1 > chunk_size:
                 chunks.append(current_chunk.strip())
                 current_chunk = word
             else:
                 current_chunk += " " + word if current_chunk else word
-                
+
         if current_chunk:
             chunks.append(current_chunk.strip())
-            
+
         return chunks
 
     async def send_message_chunks(self, chunks: List[str], ctx=None, reply_to=None) -> Optional[discord.Message]:
         """Send a list of chunks as sequential messages"""
         first_message = None
-        
+
         for i, chunk in enumerate(chunks):
             content = chunk
             if i < len(chunks) - 1:
@@ -197,7 +199,7 @@ class LLM(commands.Cog):
                     await reply_to.channel.send(content)
                 else:
                     await ctx.send(content)
-                    
+
         return first_message
 
     async def send_response_with_thinking(self, ctx, response: str, thinking: Optional[str] = None, reply_to=None) -> Optional[discord.Message]:
@@ -209,7 +211,7 @@ class LLM(commands.Cog):
 
             # First send the thinking part
             thinking_chunks = await self.chunk_text(thinking, 1800)  # Smaller size for formatting
-            
+
             # Send thinking chunks
             for i, chunk in enumerate(thinking_chunks):
                 content = chunk
@@ -219,7 +221,7 @@ class LLM(commands.Cog):
                     content = "... " + content
 
                 thinking_msg = f"💭 **Thinking Process:**\n```\n{content}\n```"
-                
+
                 if reply_to:
                     if i == 0:
                         await reply_to.reply(thinking_msg)
@@ -294,17 +296,16 @@ class LLM(commands.Cog):
         """Chat with the technical assistant model"""
         await defer_hybrid(ctx)
         response_message = None
-        
+
         try:
             model_key = await self._resolve_chat_model_key(ctx.guild)
-            model_config = self._get_model_config_for_key(model_key)
             async with ctx.typing():
                 response = await self.llm_handler.generate_response(
                     ctx.author.id,
                     message,
                     model_key
                 )
-            
+
             if not response.is_success:
                 embed = create_embed(
                     title="Error",
@@ -324,7 +325,7 @@ class LLM(commands.Cog):
                 content = response.content or ""
                 response_text, thinking = self.format_model_response(content)
                 response_message = await self.send_response_with_thinking(ctx, response_text, thinking)
-            
+
         except Exception as e:
             logging.error(f"Error in chat command: {e}")
             embed = create_embed(
@@ -377,7 +378,6 @@ class LLM(commands.Cog):
     async def show_history(self, ctx, model_type: Optional[str] = None):
         """Display the conversation history"""
         await defer_hybrid(ctx, ephemeral=True)
-        message = None
         responded = False
         try:
             if model_type:
@@ -389,7 +389,7 @@ class LLM(commands.Cog):
             else:
                 history = self.llm_handler.get_history(ctx.author.id)
                 title = "Chat History - All Models"
-            
+
             if not history:
                 embed = create_embed(
                     title=title,
@@ -550,36 +550,36 @@ class LLM(commands.Cog):
         await defer_hybrid(ctx)
         try:
             metrics = self.llm_handler.get_metrics(minutes)
-            
+
             embed = create_embed(
                 title=f"Model Statistics (Last {minutes} minutes)",
                 color=discord.Color.blue().value
             )
-            
+
             embed.add_field(
                 name="Total Requests",
                 value=str(metrics["total_requests"]),
                 inline=True
             )
-            
+
             embed.add_field(
                 name="Success Rate",
                 value=f"{metrics['success_rate']:.1f}%",
                 inline=True
             )
-            
+
             embed.add_field(
                 name="Average Latency",
                 value=f"{metrics['average_latency']:.2f}s",
                 inline=True
             )
-            
+
             embed.add_field(
                 name="Total Tokens Generated",
                 value=str(metrics["total_tokens"]),
                 inline=True
             )
-            
+
             if metrics["errors"]:
                 recent_errors = metrics["errors"][-5:]  # Show last 5 errors
                 embed.add_field(
@@ -610,9 +610,9 @@ class LLM(commands.Cog):
                     value="\n".join(lines),
                     inline=False
                 )
-            
+
             await ctx.send(embed=embed)
-            
+
         except Exception as e:
             logging.error(f"Error in model_stats: {e}")
             embed = create_embed(

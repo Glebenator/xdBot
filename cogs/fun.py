@@ -1,15 +1,15 @@
 # cogs/fun.py
-import discord
-from discord.ext import commands
-from discord.ui import View, Button
-from utils.helpers import create_embed, defer_hybrid
-from utils.db_handler import get_database_handler
-from utils.rng import RandomOrgRNG
-from datetime import datetime, timedelta
 import logging
 import random
+from datetime import datetime, timedelta
+
+import discord
+from discord.ext import commands
 
 import config
+from utils.db_handler import get_database_handler
+from utils.helpers import create_embed, defer_hybrid
+from utils.rng import RandomOrgRNG
 
 
 class Fun(commands.Cog):
@@ -54,12 +54,12 @@ class Fun(commands.Cog):
             number = await self.rng.randint(1, 100)
             # Log the roll result
             logging.info(f"Success roll for {ctx.author.name}#{ctx.author.discriminator} (ID: {ctx.author.id}): {number}")
-            
+
             message_part, success_level = await self.process_success_roll(number)
-            
+
             user = interaction.user if interaction else ctx.author
             message = f"{user.mention} {message_part}"
-            
+
             # Update database
             await self.db.log_command_usage(
                 guild_id,
@@ -77,12 +77,12 @@ class Fun(commands.Cog):
                 guild_id,
                 user.id
             )
-            
+
             if streak_info['streak_continued']:
                 message += f"\n🔥 Streak continued! Current streak: {streak_info['current_streak']} days"
             elif streak_info['streak_reset']:
-                message += f"\n❌ Streak reset! Starting new streak!"
-                
+                message += "\n❌ Streak reset! Starting new streak!"
+
             if not self.random_org_enabled:
                 message += "\nℹ️ True randomness unavailable; using fallback RNG until a Random.org key is configured."
 
@@ -115,7 +115,7 @@ class Fun(commands.Cog):
                 time_remaining = next_available - current_time
                 hours = int(time_remaining.total_seconds() // 3600)
                 minutes = int((time_remaining.total_seconds() % 3600) // 60)
-                
+
                 embed = create_embed(
                     title="Command on Cooldown ⏳",
                     description=f"You can check your success again in {hours} hours and {minutes} minutes.",
@@ -140,8 +140,8 @@ class Fun(commands.Cog):
                 "успех"
             )
             await ctx.send(message)
-            
-        except Exception as e:
+
+        except Exception:
             await ctx.send("Error accessing Random.org. Please try again later.")
 
     @commands.hybrid_command(
@@ -153,7 +153,7 @@ class Fun(commands.Cog):
         await defer_hybrid(ctx)
         guild_id = self._require_guild(ctx)
         leaderboard_data = await self.db.get_success_leaderboard(guild_id)
-        
+
         if not leaderboard_data:
             await ctx.send("No успех data available yet!")
             return
@@ -183,7 +183,7 @@ class Fun(commands.Cog):
 
             # Determine medal and rank formatting
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "👔"
-            
+
             # Calculate success bar (protect against division by zero)
             progress = min(1.0, total_success / max_success) if max_success > 0 else 0
             bar_length = 8
@@ -196,7 +196,7 @@ class Fun(commands.Cog):
                 achievements.append(f"🔥 {success_streak}d Streak")
             if highest_success == 6:
                 achievements.append("⭐ Perfect Roll")
-            
+
             # Calculate success tier
             if total_success >= 1000:
                 tier = "💎 Business Legend"
@@ -215,7 +215,7 @@ class Fun(commands.Cog):
                 f"Rank: {tier}",
                 f"Avg Success: {avg_success:.1f} ({total_attempts} attempts)"
             ]
-            
+
             if achievements:
                 value.append(f"Achievements: {' '.join(achievements)}")
 
@@ -224,7 +224,7 @@ class Fun(commands.Cog):
                 value="\n".join(value),
                 inline=False
             )
-        
+
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(
@@ -236,12 +236,12 @@ class Fun(commands.Cog):
         await defer_hybrid(ctx)
         guild_id = self._require_guild(ctx)
         stats = await self.db.get_success_stats(guild_id, ctx.author.id)
-        
+
         embed = create_embed(
             title=f"Success Stats for {ctx.author.name}",
             color=discord.Color.gold().value
         )
-        
+
         # Calculate success rank based on total success
         total_success = stats['total_success']
         if total_success >= 1000:
@@ -261,16 +261,16 @@ class Fun(commands.Cog):
             value=f"{rank}\n{total_success} total points",
             inline=False
         )
-        
+
         # Streak and Abilities
         streak_text = f"🔥 {stats['success_streak']} days"
-            
+
         embed.add_field(
             name="Current Streak",
             value=streak_text,
             inline=True
         )
-        
+
         # Last check timestamp
         if stats['last_success_check']:
             last_check = datetime.fromisoformat(stats['last_success_check'])
@@ -279,14 +279,14 @@ class Fun(commands.Cog):
                 value=f"📅 {last_check.strftime('%Y-%m-%d %H:%M')}",
                 inline=True
             )
-        
+
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="roll", description="Roll a random number using Random.org")
     async def roll(self, ctx, max_num: int = 100):
         """Roll a random number between 1 and max_num using true randomness from Random.org"""
         await defer_hybrid(ctx)  # Acknowledge command while we wait for Random.org
-        
+
         # Update database
         guild_id = self._require_guild(ctx)
 
@@ -295,7 +295,7 @@ class Fun(commands.Cog):
             ctx.author.id,
             ctx.author.name
         )
-        
+
         try:
             number = await self.rng.randint(1, max_num)
             await self.db.log_command_usage(
@@ -308,9 +308,9 @@ class Fun(commands.Cog):
             if not self.random_org_enabled:
                 response += "\nℹ️ True randomness unavailable; using fallback RNG until a Random.org key is configured."
             await ctx.send(response)
-        except Exception as e:
+        except Exception:
             await ctx.send("Error accessing Random.org. Please try again later.")
-        
+
     @commands.hybrid_command(name = "logitech", description = "see why logitech is the way to go")
     async def logitech(self, ctx):
         await ctx.send("i was asking about why to get razer when they copied logitech. that was all i wanted to know, theres no basis on anything said expect for ""its better"", but sure if 7ms is worth it for shitty QA and having to rma it in 3 months then go ahead. atleast with logitech you can upgrade to the powerplay and have the mouse charge while you play so you never have to worry about it.  ")

@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 import discord
 import yt_dlp
 
-from utils.music_exceptions import YTDLError, NoResultsError
+from utils.music_exceptions import NoResultsError, YTDLError
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +88,11 @@ def _build_audio_source(stream_url: str, headers: Optional[Dict[str, str]]) -> d
 
 class YTDLSource(discord.PCMVolumeTransformer):
     """Audio source for playing music from YouTube and other platforms.
-    
+
     This class uses yt-dlp to extract audio streams and Discord.py's
     PCMVolumeTransformer for volume control.
     """
-    
+
     def __init__(
         self,
         source: discord.AudioSource,
@@ -110,7 +110,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.uploader: Optional[str] = data.get('uploader')
         self.view_count: Optional[int] = data.get('view_count')
         self.http_headers: Optional[Dict[str, str]] = data.get('http_headers')
-        
+
     @classmethod
     async def create_source(
         cls,
@@ -120,36 +120,36 @@ class YTDLSource(discord.PCMVolumeTransformer):
         volume: float = 0.5
     ) -> YTDLSource:
         """Create an audio source from a search query or URL.
-        
+
         Args:
             query: YouTube URL or search query
             loop: Event loop to use for async operations
             volume: Initial volume (0.0 to 1.0)
-            
+
         Returns:
             YTDLSource ready for playback
-            
+
         Raises:
             YTDLError: If extraction fails
             NoResultsError: If search returns no results
         """
         loop = loop or asyncio.get_event_loop()
-        
+
         try:
             data = dict(await cls.get_info(query, loop=loop))
-            
+
             if not data:
                 raise NoResultsError(query)
-            
+
             # Create the audio source
             filename = data.get('url')
             if not filename:
                 raise YTDLError("Could not extract audio URL")
-            
+
             data['url'] = filename
             source = _build_audio_source(filename, data.get('http_headers'))
             return cls(source, data=data, volume=volume)
-            
+
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"yt-dlp download error for query '{query}': {e}")
             raise YTDLError(f"Failed to extract audio: {str(e)}")
@@ -168,7 +168,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         """Construct a source directly from a known audio stream URL."""
         source = _build_audio_source(stream_url, data.get('http_headers'))
         return cls(source, data=data, volume=volume)
-    
+
     @staticmethod
     async def get_info(
         query: str,
@@ -177,49 +177,49 @@ class YTDLSource(discord.PCMVolumeTransformer):
         download: bool = False
     ) -> Dict[str, Any]:
         """Extract information from a URL or search query.
-        
+
         Args:
             query: YouTube URL or search query
             loop: Event loop to use
             download: Whether to download the audio file
-            
+
         Returns:
             Dictionary containing video information
-            
+
         Raises:
             YTDLError: If extraction fails
         """
         loop = loop or asyncio.get_event_loop()
         ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-        
+
         try:
             # Run yt-dlp in executor to avoid blocking
             data = await loop.run_in_executor(
                 None,
                 lambda: ytdl.extract_info(query, download=download)
             )
-            
+
             # If it's a search result, get the first video
             if 'entries' in data:
                 data = data['entries'][0] if data['entries'] else None
-                
+
             if not data:
                 raise NoResultsError(query)
-            
+
             logger.info(
                 f"Extracted info for '{data.get('title', 'Unknown')}' "
                 f"(duration: {data.get('duration', 0)}s)"
             )
-            
+
             return _normalize_info(data)
-            
+
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"yt-dlp extraction error for '{query}': {e}")
             raise YTDLError(f"Failed to extract info: {str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error extracting info for '{query}': {e}")
             raise YTDLError(f"Unexpected error: {str(e)}")
-    
+
     @staticmethod
     async def get_playlist_info(
         url: str,
@@ -228,53 +228,53 @@ class YTDLSource(discord.PCMVolumeTransformer):
         max_songs: int = 50
     ) -> list[Dict[str, Any]]:
         """Extract information from a playlist URL.
-        
+
         Args:
             url: YouTube playlist URL
             loop: Event loop to use
             max_songs: Maximum number of songs to extract
-            
+
         Returns:
             List of video information dictionaries
-            
+
         Raises:
             YTDLError: If extraction fails
         """
         loop = loop or asyncio.get_event_loop()
-        
+
         # Allow playlists for this specific call
         options = YTDL_OPTIONS.copy()
         options['noplaylist'] = False
         options['playlistend'] = max_songs
-        
+
         ytdl = yt_dlp.YoutubeDL(options)
-        
+
         try:
             data = await loop.run_in_executor(
                 None,
                 lambda: ytdl.extract_info(url, download=False)
             )
-            
+
             if 'entries' not in data:
                 # Single video, not a playlist
                 return [_normalize_info(data)] if data else []
-            
+
             entries = [entry for entry in data['entries'] if entry]
             logger.info(f"Extracted {len(entries)} songs from playlist")
-            
+
             return [_normalize_info(entry) for entry in entries[:max_songs]]
-            
+
         except Exception as e:
             logger.error(f"Error extracting playlist '{url}': {e}")
             raise YTDLError(f"Failed to extract playlist: {str(e)}")
-    
+
     @staticmethod
     def format_duration(seconds: int) -> str:
         """Format duration in seconds to MM:SS or HH:MM:SS.
-        
+
         Args:
             seconds: Duration in seconds
-            
+
         Returns:
             Formatted duration string
         """
@@ -282,10 +282,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
         if seconds == 0:
             return "Unknown"
-        
+
         hours, remainder = divmod(seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
-        
+
         if hours > 0:
             return f"{hours}:{minutes:02d}:{seconds:02d}"
         return f"{minutes}:{seconds:02d}"

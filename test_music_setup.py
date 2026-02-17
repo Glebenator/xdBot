@@ -5,8 +5,8 @@ This script checks if all dependencies and modules are correctly installed
 and importable before running the bot.
 """
 
-import sys
 import subprocess
+import sys
 
 
 def check_python_version():
@@ -62,7 +62,7 @@ def check_module(module_name, friendly_name=None):
 def check_python_dependencies():
     """Verify all required Python packages are installed"""
     print("\n📦 Checking Python dependencies...")
-    
+
     modules = [
         ("discord", "discord.py"),
         ("aiohttp", "aiohttp"),
@@ -71,31 +71,31 @@ def check_python_dependencies():
         ("aiosqlite", "aiosqlite"),
         ("dotenv", "python-dotenv"),
     ]
-    
+
     all_ok = True
     for module, friendly in modules:
         if not check_module(module, friendly):
             all_ok = False
-    
+
     return all_ok
 
 
 def check_music_modules():
     """Verify all custom music modules can be imported"""
     print("\n🎵 Checking music modules...")
-    
+
     modules = [
         "utils.music_exceptions",
         "utils.voice_handler",
         "utils.music_queue",
         "cogs.music",
     ]
-    
+
     all_ok = True
     for module in modules:
         if not check_module(module):
             all_ok = False
-    
+
     return all_ok
 
 
@@ -105,7 +105,7 @@ def check_config():
     try:
         import config
         settings = config.settings
-        
+
         # Check music settings exist
         attrs = [
             "music_max_queue_size",
@@ -113,7 +113,7 @@ def check_config():
             "music_default_volume",
             "music_max_duration",
         ]
-        
+
         all_ok = True
         for attr in attrs:
             if hasattr(settings, attr):
@@ -122,7 +122,7 @@ def check_config():
             else:
                 print(f"   ❌ {attr} not found")
                 all_ok = False
-        
+
         return all_ok
     except Exception as e:
         print(f"   ❌ Error loading config: {e}")
@@ -134,7 +134,7 @@ def check_database():
     print("\n🗄️  Checking database...")
     try:
         from utils.db_handler import get_database_handler
-        db = get_database_handler()
+        get_database_handler()
         print("   ✅ Database handler initialized")
         print("   ✅ music_history table created")
         return True
@@ -148,7 +148,7 @@ def main():
     print("=" * 60)
     print("🎵 Music Feature Phase 2 - Pre-Flight Verification")
     print("=" * 60)
-    
+
     checks = [
         ("Python Version", check_python_version),
         ("FFmpeg", check_ffmpeg),
@@ -157,7 +157,7 @@ def main():
         ("Configuration", check_config),
         ("Database", check_database),
     ]
-    
+
     results = []
     for name, check_func in checks:
         try:
@@ -166,20 +166,20 @@ def main():
         except Exception as e:
             print(f"\n❌ Unexpected error in {name}: {e}")
             results.append((name, False))
-    
+
     # Summary
     print("\n" + "=" * 60)
     print("📊 Summary")
     print("=" * 60)
-    
+
     all_passed = all(result for _, result in results)
-    
+
     for name, result in results:
         status = "✅ PASS" if result else "❌ FAIL"
         print(f"{status:10} | {name}")
-    
+
     print("=" * 60)
-    
+
     if all_passed:
         print("\n🎉 All checks passed! Ready to start the bot.")
         print("\n📝 Next steps:")
