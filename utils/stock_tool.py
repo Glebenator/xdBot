@@ -7,6 +7,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import aiohttp
+
 from utils.polygon_handler import PolygonHandler
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,11 @@ class StockMarketTool:
     async def close(self) -> None:
         """Close the Polygon handler session."""
         await self.polygon.close()
+
+    def _error_response(self, message: str, **extra: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"error": message}
+        payload.update(extra)
+        return payload
 
     def get_tool_schema(self) -> Dict[str, Any]:
         """Get the OpenAI function calling schema for this tool.
@@ -283,7 +290,7 @@ class StockMarketTool:
                         "data_type": "previous_close",
                         "note": "Previous trading day data (snapshot requires paid plan)"
                     }
-            except Exception as prev_error:
+            except (aiohttp.ClientError, ValueError, TimeoutError) as prev_error:
                 # If previous close fails, try snapshot (for paid plans)
                 logger.debug(f"Previous close failed for {ticker}, trying snapshot: {prev_error}")
 
@@ -312,7 +319,7 @@ class StockMarketTool:
                             "change_percent": change_percent,
                             "data_type": "snapshot"
                         }
-                except Exception as snap_error:
+                except (aiohttp.ClientError, ValueError, TimeoutError) as snap_error:
                     logger.debug(f"Snapshot also failed for {ticker}: {snap_error}")
                     # Both failed, raise the original error
                     raise prev_error
@@ -323,22 +330,27 @@ class StockMarketTool:
                 "ticker": ticker.upper()
             }
 
-        except Exception as e:
-            logger.error(f"Error fetching stock price for {ticker}: {e}")
+        except (aiohttp.ClientError, ValueError, TimeoutError) as e:
+            logger.warning("Error fetching stock price for %s: %s", ticker, e)
 
             # Provide helpful error message based on error type
             error_str = str(e)
             if "403" in error_str or "Forbidden" in error_str:
-                return {
-                    "error": f"Unable to fetch data for {ticker.upper()}. This may be due to API plan limitations. Free tier has limited endpoints.",
-                    "ticker": ticker.upper(),
-                    "suggestion": "Verify your API key has access to stock data endpoints at polygon.io/dashboard"
-                }
-            else:
-                return {
-                    "error": f"Failed to fetch data for {ticker.upper()}: {str(e)}",
-                    "ticker": ticker.upper()
-                }
+                return self._error_response(
+                    f"Unable to fetch data for {ticker.upper()}. This may be due to API plan limitations. Free tier has limited endpoints.",
+                    ticker=ticker.upper(),
+                    suggestion="Verify your API key has access to stock data endpoints at polygon.io/dashboard",
+                )
+            return self._error_response(
+                f"Failed to fetch data for {ticker.upper()}: {str(e)}",
+                ticker=ticker.upper(),
+            )
+        except Exception as e:
+            logger.exception("Unexpected stock price error for %s", ticker)
+            return self._error_response(
+                f"Failed to fetch data for {ticker.upper()}: {str(e)}",
+                ticker=ticker.upper(),
+            )
 
     async def search_stocks(self, query: str) -> Dict[str, Any]:
         """Search for stock tickers.
@@ -381,12 +393,12 @@ class StockMarketTool:
                 "count": len(formatted_results)
             }
 
+        except (aiohttp.ClientError, ValueError, TimeoutError) as e:
+            logger.warning("Error searching stocks for '%s': %s", query, e)
+            return self._error_response(f"Failed to search for '{query}': {str(e)}", query=query)
         except Exception as e:
-            logger.error(f"Error searching stocks for '{query}': {e}")
-            return {
-                "error": f"Failed to search for '{query}': {str(e)}",
-                "query": query
-            }
+            logger.exception("Unexpected stock search error for '%s'", query)
+            return self._error_response(f"Failed to search for '{query}': {str(e)}", query=query)
 
     async def get_market_status(self) -> Dict[str, Any]:
         """Get current market status.
@@ -415,11 +427,12 @@ class StockMarketTool:
                 "is_open": market == "open"
             }
 
+        except (aiohttp.ClientError, ValueError, TimeoutError) as e:
+            logger.warning("Error fetching market status: %s", e)
+            return self._error_response(f"Failed to fetch market status: {str(e)}")
         except Exception as e:
-            logger.error(f"Error fetching market status: {e}")
-            return {
-                "error": f"Failed to fetch market status: {str(e)}"
-            }
+            logger.exception("Unexpected market status error")
+            return self._error_response(f"Failed to fetch market status: {str(e)}")
 
     async def get_stock_rsi(self, ticker: str, window: int = 14) -> Dict[str, Any]:
         """Get RSI indicator for a stock.
@@ -472,12 +485,18 @@ class StockMarketTool:
                 "interpretation": interpretation
             }
 
+        except (aiohttp.ClientError, ValueError, TimeoutError) as e:
+            logger.warning("Error fetching RSI for %s: %s", ticker, e)
+            return self._error_response(
+                f"Failed to fetch RSI for {ticker.upper()}: {str(e)}",
+                ticker=ticker.upper(),
+            )
         except Exception as e:
-            logger.error(f"Error fetching RSI for {ticker}: {e}")
-            return {
-                "error": f"Failed to fetch RSI for {ticker.upper()}: {str(e)}",
-                "ticker": ticker.upper()
-            }
+            logger.exception("Unexpected RSI error for %s", ticker)
+            return self._error_response(
+                f"Failed to fetch RSI for {ticker.upper()}: {str(e)}",
+                ticker=ticker.upper(),
+            )
 
     async def get_stock_sma(self, ticker: str, window: int = 50) -> Dict[str, Any]:
         """Get SMA indicator for a stock.
@@ -969,4 +988,3 @@ class StockMarketTool:
             result = "⚠️ " + result
 
         return result
-

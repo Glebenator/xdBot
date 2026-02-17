@@ -1,6 +1,9 @@
 [tool.pytest.ini_options]
 python_files = ["test_*.py"]
-addopts = "-q --ignore=test_chart_generation.py --ignore=test_music_setup.py --ignore=test_search_tool.py --ignore=test_tool_selection.py --ignore=test_voice_error.py"
+addopts = "-q -m 'not integration'"
+markers = [
+  "integration: tests that require external services or network access",
+]
 
 [tool.ruff]
 line-length = 100

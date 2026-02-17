@@ -1,16 +1,24 @@
-"""Test chart generation without Discord."""
+"""Integration test for chart generation without Discord."""
 import asyncio
 from datetime import datetime, timedelta
+
+import pytest
 
 import config
 from utils.chart_generator import ChartGenerator
 from utils.polygon_handler import PolygonHandler
 
 
-async def test_chart():
-    """Test chart generation."""
+@pytest.mark.integration
+def test_chart():
+    """Generate charts from live Polygon data when integration tests are enabled."""
     if not config.settings.polygon_enabled:
-        print("❌ POLYGON_API_KEY not configured in .env")
+        pytest.skip("POLYGON_API_KEY is not configured")
+    asyncio.run(_run_chart_test())
+
+
+async def _run_chart_test() -> None:
+    if not config.settings.polygon_enabled:
         return
 
     polygon = PolygonHandler(config.settings.polygon_api_key)
@@ -60,12 +68,10 @@ async def test_chart():
         print("✅ Comparison chart saved to test_comparison.png")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        pytest.fail(f"Chart generation failed: {e}")
 
     finally:
         await polygon.close()
 
 if __name__ == "__main__":
-    asyncio.run(test_chart())
+    asyncio.run(_run_chart_test())

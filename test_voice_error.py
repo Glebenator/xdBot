@@ -4,6 +4,8 @@
 import asyncio
 import sys
 
+import pytest
+
 sys.path.insert(0, '.')
 
 # Force clean import
@@ -11,8 +13,15 @@ for mod in list(sys.modules.keys()):
     if 'voice_handler' in mod or 'music' in mod:
         del sys.modules[mod]
 
-async def test_voice_handler():
-    """Test the voice handler with a simple query."""
+@pytest.mark.integration
+def test_voice_handler():
+    """Test the voice handler with a simple query (network-dependent)."""
+    result = asyncio.run(_run_voice_handler_test())
+    assert result
+
+
+async def _run_voice_handler_test() -> bool:
+    """Run the voice handler test coroutine."""
     try:
         from utils.voice_handler import FFMPEG_OPTIONS, YTDLSource
 
@@ -63,5 +72,5 @@ async def test_voice_handler():
         return False
 
 if __name__ == "__main__":
-    result = asyncio.run(test_voice_handler())
+    result = asyncio.run(_run_voice_handler_test())
     sys.exit(0 if result else 1)

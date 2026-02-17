@@ -11,6 +11,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 # Setup path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -29,8 +31,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def test_search_tool_direct():
-    """Test the search tool directly."""
+@pytest.mark.integration
+def test_search_tool_direct():
+    """Test the search tool directly (integration)."""
+    if not os.getenv("TAVILY_API_KEY"):
+        pytest.skip("TAVILY_API_KEY not set")
+    assert asyncio.run(_test_search_tool_direct_impl())
+
+
+async def _test_search_tool_direct_impl() -> bool:
+    """Run direct search tool integration test."""
     print("\n" + "="*60)
     print("Testing Tavily Search Tool (Direct)")
     print("="*60)
@@ -70,8 +80,18 @@ async def test_search_tool_direct():
         await tool.close()
 
 
-async def test_ollama_with_tools():
-    """Test Ollama integration with tools."""
+@pytest.mark.integration
+def test_ollama_with_tools():
+    """Test Ollama integration with tools (integration)."""
+    if not os.getenv("TAVILY_API_KEY"):
+        pytest.skip("TAVILY_API_KEY not set")
+    if not os.getenv("OLLAMA_URL"):
+        pytest.skip("OLLAMA_URL not set")
+    assert asyncio.run(_test_ollama_with_tools_impl())
+
+
+async def _test_ollama_with_tools_impl() -> bool:
+    """Run Ollama integration test."""
     print("\n" + "="*60)
     print("Testing Ollama with Tool Calling")
     print("="*60)
@@ -131,8 +151,18 @@ async def test_ollama_with_tools():
         await handler.close()
 
 
-async def test_openrouter_with_tools():
-    """Test OpenRouter integration with tools."""
+@pytest.mark.integration
+def test_openrouter_with_tools():
+    """Test OpenRouter integration with tools (integration)."""
+    if not os.getenv("OPENROUTER_API_KEY"):
+        pytest.skip("OPENROUTER_API_KEY not set")
+    if not os.getenv("TAVILY_API_KEY"):
+        pytest.skip("TAVILY_API_KEY not set")
+    assert asyncio.run(_test_openrouter_with_tools_impl())
+
+
+async def _test_openrouter_with_tools_impl() -> bool:
+    """Run OpenRouter integration test."""
     print("\n" + "="*60)
     print("Testing OpenRouter with Tool Calling")
     print("="*60)
@@ -196,7 +226,7 @@ async def test_openrouter_with_tools():
         await handler.close()
 
 
-async def test_tool_definitions():
+def test_tool_definitions():
     """Test that tool definitions are properly formatted."""
     print("\n" + "="*60)
     print("Testing Tool Definitions")
@@ -227,7 +257,7 @@ async def test_tool_definitions():
     assert "query" in ollama_def["function"]["parameters"]["required"]
 
     print("\n✅ Tool definitions test passed!")
-    return True
+    assert True
 
 
 async def main():
@@ -239,16 +269,17 @@ async def main():
     results = []
 
     # Test tool definitions (always works)
-    results.append(await test_tool_definitions())
+    test_tool_definitions()
+    results.append(True)
 
     # Test direct search (requires API key)
-    results.append(await test_search_tool_direct())
+    results.append(await _test_search_tool_direct_impl())
 
     # Test Ollama integration (optional)
-    results.append(await test_ollama_with_tools())
+    results.append(await _test_ollama_with_tools_impl())
 
     # Test OpenRouter integration (optional)
-    results.append(await test_openrouter_with_tools())
+    results.append(await _test_openrouter_with_tools_impl())
 
     print("\n" + "="*60)
     print("Test Summary")
