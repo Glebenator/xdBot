@@ -36,17 +36,17 @@ class Fun(commands.Cog):
     async def process_success_roll(self, number: int) -> tuple[str, int]:
         """Process a success roll and return the message and success level"""
         if number < 5:
-            return "📉 Massive anti-success", 1
+            return "📉 Massive anti-success " + str(number), 1
         elif number < 10:
-            return "🗑️ garbage success", 2
+            return "🗑️ garbage success " + str(number), 2
         elif number < 50:
-            return "❌ is not successful today", 3
+            return "❌ is not successful today " + str(number), 3
         elif number < 75:
-            return "📈 is somewhat successful today", 4
+            return "📈 is somewhat successful today " + str(number), 4
         elif number < 90:
-            return "💰 is very successful today", 5
+            return "💰 is very successful today " + str(number), 5
         else:
-            return "🌟 IS A MASSIVE SUCCESSFUL BUSINESSMAN", 6
+            return "🌟 IS A MASSIVE SUCCESSFUL BUSINESSMAN " + str(number), 6
 
     async def handle_success_roll(self, ctx, guild_id: int, interaction=None) -> tuple[str, int]:
         """Handle the success roll logic"""
@@ -281,6 +281,18 @@ class Fun(commands.Cog):
             )
 
         await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="огурчик", description="Насколько ты откушал огурчик")
+    async def cucumber(self, ctx):
+        """Check how much cucumber you have eaten"""
+        number = random.randint(0, 100)
+        mention = ctx.author.mention
+        if number == 0:
+            await ctx.send(f"{mention} нихуя не откушал")
+        elif number == 100:
+            await ctx.send(f"{mention} сьел весь огурчик 🥒")
+        else:
+            await ctx.send(f"{mention} откушал {number}% огурчика 🥒")
 
     @commands.hybrid_command(name="roll", description="Roll a random number using Random.org")
     async def roll(self, ctx, max_num: int = 100):
