@@ -40,6 +40,7 @@ class DatabaseHandler:
             self._ensure_command_executions_table(cursor)
             self._ensure_llm_settings_table(cursor)
             self._ensure_music_history_table(cursor)
+            self._ensure_quotes_table(cursor)
             self._ensure_indexes(cursor)
 
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -354,6 +355,25 @@ class DatabaseHandler:
             """
         )
 
+    def _ensure_quotes_table(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER,
+                message_id INTEGER,
+                quoted_user_id INTEGER,
+                quoted_username TEXT,
+                quote_text TEXT NOT NULL,
+                saved_by_user_id INTEGER NOT NULL,
+                saved_by_username TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP
+            )
+            """
+        )
+
     def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_command_usage_guild_user ON command_usage (guild_id, user_id)"
@@ -372,6 +392,15 @@ class DatabaseHandler:
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_music_history_guild_song ON music_history (guild_id, song_url)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quotes_guild_active ON quotes (guild_id, deleted_at)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quotes_guild_user_active ON quotes (guild_id, quoted_user_id, deleted_at)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quotes_message_active ON quotes (guild_id, message_id, deleted_at)"
         )
 
     # ------------------------------------------------------------------
@@ -1051,6 +1080,189 @@ class DatabaseHandler:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Quote hall
+    # ------------------------------------------------------------------
+    async def add_quote(
+        self,
+        guild_id: int,
+        quote_text: str,
+        *,
+        saved_by_user_id: int,
+        saved_by_username: str,
+        quoted_user_id: Optional[int] = None,
+        quoted_username: Optional[str] = None,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Save a quote and return the active quote row.
+
+        Message-based quotes are de-duplicated per guild so the same Discord
+        message does not fill the hall multiple times.
+        """
+        async with self._connect() as conn:
+            if message_id is not None:
+                async with conn.execute(
+                    """
+                    SELECT *
+                    FROM quotes
+                    WHERE guild_id = ?
+                        AND message_id = ?
+                        AND deleted_at IS NULL
+                    """,
+                    (guild_id, message_id),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        quote = dict(row)
+                        quote["duplicate"] = True
+                        return quote
+
+            cursor = await conn.execute(
+                """
+                INSERT INTO quotes (
+                    guild_id,
+                    channel_id,
+                    message_id,
+                    quoted_user_id,
+                    quoted_username,
+                    quote_text,
+                    saved_by_user_id,
+                    saved_by_username,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    guild_id,
+                    channel_id,
+                    message_id,
+                    quoted_user_id,
+                    quoted_username,
+                    quote_text,
+                    saved_by_user_id,
+                    saved_by_username,
+                ),
+            )
+            await conn.commit()
+            quote_id = cursor.lastrowid
+
+            async with conn.execute(
+                """
+                SELECT *
+                FROM quotes
+                WHERE id = ?
+                """,
+                (quote_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                quote = dict(row) if row else {}
+                quote["duplicate"] = False
+                return quote
+
+    async def get_quote(self, guild_id: int, quote_id: int) -> Optional[Dict[str, Any]]:
+        async with self._connect() as conn:
+            async with conn.execute(
+                """
+                SELECT *
+                FROM quotes
+                WHERE guild_id = ?
+                    AND id = ?
+                    AND deleted_at IS NULL
+                """,
+                (guild_id, quote_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_random_quote(
+        self,
+        guild_id: int,
+        *,
+        quoted_user_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        async with self._connect() as conn:
+            params: Sequence[Any]
+            if quoted_user_id is None:
+                query = """
+                    SELECT *
+                    FROM quotes
+                    WHERE guild_id = ?
+                        AND deleted_at IS NULL
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """
+                params = (guild_id,)
+            else:
+                query = """
+                    SELECT *
+                    FROM quotes
+                    WHERE guild_id = ?
+                        AND quoted_user_id = ?
+                        AND deleted_at IS NULL
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """
+                params = (guild_id, quoted_user_id)
+
+            async with conn.execute(query, params) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def list_quotes(
+        self,
+        guild_id: int,
+        *,
+        quoted_user_id: Optional[int] = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        limit = max(1, min(limit, 25))
+        offset = max(0, offset)
+
+        async with self._connect() as conn:
+            params: Sequence[Any]
+            if quoted_user_id is None:
+                query = """
+                    SELECT *
+                    FROM quotes
+                    WHERE guild_id = ?
+                        AND deleted_at IS NULL
+                    ORDER BY id DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = (guild_id, limit, offset)
+            else:
+                query = """
+                    SELECT *
+                    FROM quotes
+                    WHERE guild_id = ?
+                        AND quoted_user_id = ?
+                        AND deleted_at IS NULL
+                    ORDER BY id DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = (guild_id, quoted_user_id, limit, offset)
+
+            async with conn.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def delete_quote(self, guild_id: int, quote_id: int) -> bool:
+        async with self._connect() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE quotes
+                SET deleted_at = CURRENT_TIMESTAMP
+                WHERE guild_id = ?
+                    AND id = ?
+                    AND deleted_at IS NULL
+                """,
+                (guild_id, quote_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
 
 
 _shared_db_handler: Optional[DatabaseHandler] = None

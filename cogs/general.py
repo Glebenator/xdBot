@@ -29,6 +29,8 @@ class General(commands.Cog):
             return "Chat"
         elif cog_name == "Stocks":
             return "📈 Stock Market"
+        elif cog_name == "Quotes":
+            return "Quote Hall"
         else:
             return "Misc"
 
