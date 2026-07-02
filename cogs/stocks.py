@@ -1025,7 +1025,7 @@ class Stocks(commands.Cog):
                     color=discord.Color.orange()
                 )
             else:
-                latest = results[-1]
+                latest = results[0]
                 sma_value = latest.get("value", 0)
                 timestamp = latest.get("timestamp", 0)
                 date = datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
@@ -1081,7 +1081,7 @@ class Stocks(commands.Cog):
                 # Show recent history
                 if len(results) > 1:
                     history = []
-                    for r in results[-5:]:
+                    for r in reversed(results[:5]):
                         sma_val = r.get("value", 0)
                         ts = r.get("timestamp", 0)
                         dt = datetime.fromtimestamp(ts / 1000).strftime("%m/%d")
@@ -1144,7 +1144,7 @@ class Stocks(commands.Cog):
                     color=discord.Color.orange()
                 )
             else:
-                latest = results[-1]
+                latest = results[0]
                 ema_value = latest.get("value", 0)
                 timestamp = latest.get("timestamp", 0)
                 date = datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
@@ -1200,7 +1200,7 @@ class Stocks(commands.Cog):
                 # Show recent history
                 if len(results) > 1:
                     history = []
-                    for r in results[-5:]:
+                    for r in reversed(results[:5]):
                         ema_val = r.get("value", 0)
                         ts = r.get("timestamp", 0)
                         dt = datetime.fromtimestamp(ts / 1000).strftime("%m/%d")
@@ -1257,7 +1257,7 @@ class Stocks(commands.Cog):
                     color=discord.Color.orange()
                 )
             else:
-                latest = results[-1]
+                latest = results[0]
                 macd_value = latest.get("value", 0)
                 signal = latest.get("signal", 0)
                 histogram = latest.get("histogram", 0)
@@ -1276,7 +1276,7 @@ class Stocks(commands.Cog):
 
                 # Check for crossover
                 if len(results) > 1:
-                    prev = results[-2]
+                    prev = results[1]
                     prev_macd = prev.get("value", 0)
                     prev_signal = prev.get("signal", 0)
 
@@ -1335,7 +1335,7 @@ class Stocks(commands.Cog):
                 # Show recent history
                 if len(results) > 1:
                     history = []
-                    for r in results[-5:]:
+                    for r in reversed(results[:5]):
                         m_val = r.get("value", 0)
                         s_val = r.get("signal", 0)
                         ts = r.get("timestamp", 0)

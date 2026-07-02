@@ -460,7 +460,7 @@ class StockMarketTool:
                     "ticker": ticker.upper()
                 }
 
-            latest = results[-1]
+            latest = results[0]
             rsi_value = latest.get("value", 0)
             timestamp = latest.get("timestamp", 0)
             date = datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
@@ -529,7 +529,7 @@ class StockMarketTool:
                     "ticker": ticker.upper()
                 }
 
-            latest = sma_results[-1]
+            latest = sma_results[0]
             sma_value = latest.get("value", 0)
             timestamp = latest.get("timestamp", 0)
             date = datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
@@ -593,7 +593,7 @@ class StockMarketTool:
                     "ticker": ticker.upper()
                 }
 
-            latest = ema_results[-1]
+            latest = ema_results[0]
             ema_value = latest.get("value", 0)
             timestamp = latest.get("timestamp", 0)
             date = datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
@@ -651,7 +651,7 @@ class StockMarketTool:
                     "ticker": ticker.upper()
                 }
 
-            latest = results[-1]
+            latest = results[0]
             macd_value = latest.get("value", 0)
             signal = latest.get("signal", 0)
             histogram = latest.get("histogram", 0)
@@ -669,7 +669,7 @@ class StockMarketTool:
             # Check for crossover
             crossover = None
             if len(results) > 1:
-                prev = results[-2]
+                prev = results[1]
                 prev_macd = prev.get("value", 0)
                 prev_signal = prev.get("signal", 0)
 
@@ -734,10 +734,10 @@ class StockMarketTool:
                 }
 
             # Get current and previous values
-            current_50 = sma_50_results[-1].get("value", 0)
-            current_200 = sma_200_results[-1].get("value", 0)
-            previous_50 = sma_50_results[-2].get("value", 0)
-            previous_200 = sma_200_results[-2].get("value", 0)
+            current_50 = sma_50_results[0].get("value", 0)
+            current_200 = sma_200_results[0].get("value", 0)
+            previous_50 = sma_50_results[1].get("value", 0)
+            previous_200 = sma_200_results[1].get("value", 0)
 
             # Detect crossover
             crossover = None

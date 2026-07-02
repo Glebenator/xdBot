@@ -132,6 +132,7 @@ class LLMHandler:
         metrics_retention_minutes: int = 1440,
         tavily_api_key: Optional[str] = None,
         searxng_url: Optional[str] = None,
+        polygon_api_key: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.max_context_messages = max_context_messages
@@ -143,6 +144,7 @@ class LLMHandler:
         self.metrics_retention_minutes = metrics_retention_minutes
         self.tavily_api_key = tavily_api_key
         self.searxng_url = searxng_url
+        self.polygon_api_key = polygon_api_key
 
         self.conversation_history: Dict[int, Dict[str, deque[Message]]] = {}
         self.model_configs: Dict[str, ModelConfig] = {}
@@ -160,10 +162,31 @@ class LLMHandler:
                 tavily_api_key=tavily_api_key,
             )
 
+        self._stock_tool: Optional[Any] = None
+        if polygon_api_key:
+            from utils.stock_tool import StockMarketTool
+            self._stock_tool = StockMarketTool(api_key=polygon_api_key)
+
     def register_model(self, key: str, config: ModelConfig) -> None:
         """Register or replace a model configuration under a logical key."""
 
         self.model_configs[key] = config
+
+    def _get_available_tool_schemas(self, provider: ProviderType) -> List[Dict[str, Any]]:
+        """Collect configured tool schemas for the requested provider."""
+
+        schemas: List[Dict[str, Any]] = []
+
+        if self._search_tool:
+            if provider is ProviderType.OLLAMA:
+                schemas.append(self._search_tool.get_ollama_tool_definition())
+            else:
+                schemas.append(self._search_tool.get_tool_definition())
+
+        if self._stock_tool:
+            schemas.extend(self._stock_tool.get_all_tool_schemas())
+
+        return schemas
 
     def get_available_tools_schemas(self) -> List[Dict[str, Any]]:
         """Get all available tool schemas for function calling.
@@ -171,12 +194,7 @@ class LLMHandler:
         Returns:
             List of tool schemas that can be passed to LLM
         """
-        schemas = []
-
-        if self._search_tool:
-            schemas.append(self._search_tool.get_tool_schema())
-
-        return schemas
+        return self._get_available_tool_schemas(ProviderType.OPENROUTER)
 
     def list_model_keys(self) -> List[str]:
         return list(self.model_configs.keys())
@@ -201,6 +219,9 @@ class LLMHandler:
 
         if self._search_tool:
             await self._search_tool.close()
+
+        if self._stock_tool:
+            await self._stock_tool.close()
 
     def add_to_history(
         self,
@@ -305,7 +326,7 @@ class LLMHandler:
             tool_names.append(name)
 
         guidance_parts = [
-            "You are a helpful AI assistant with access to a web search tool.",
+            "You are a helpful AI assistant with access to external tools.",
         ]
 
         # Add guidance for search tool if available
@@ -323,11 +344,29 @@ class LLMHandler:
                 "\n  • 'What's the current weather forecast?' → use tavily_search"
             )
 
+        stock_tool_names = {
+            "get_stock_price",
+            "search_stocks",
+            "get_market_status",
+            "get_stock_rsi",
+            "get_stock_sma",
+            "get_stock_ema",
+            "get_stock_macd",
+            "detect_golden_cross",
+        }
+        if stock_tool_names.intersection(tool_names):
+            guidance_parts.append(
+                "\nStock Market Tools:"
+                "\n- Use stock tools for stock prices, ticker lookup, market status, and technical indicators"
+                "\n- Prefer search_stocks first when the user gives a company name but no ticker symbol"
+                "\n- Use tavily_search only for market news or broader context that stock tools do not provide"
+            )
+
         guidance_parts.append(
             "\nGeneral Rules:"
-            "\n- Use the search tool when you need current or real-time information"
-            "\n- Provide clear, helpful responses based on the search results"
-            "\n- If the search doesn't return useful results, acknowledge this and provide what help you can"
+            "\n- Use tools when you need current or real-time information"
+            "\n- Provide clear, helpful responses based on the tool results"
+            "\n- If a tool doesn't return useful results, acknowledge this and provide what help you can"
         )
 
         return "\n".join(guidance_parts)
@@ -360,14 +399,7 @@ class LLMHandler:
 
             # If no tools specified, gather all available tools
             if tools_payload is None:
-                available_tools = []
-
-                # Add search tool
-                if self._search_tool:
-                    if model_config.provider is ProviderType.OLLAMA:
-                        available_tools.append(self._search_tool.get_ollama_tool_definition())
-                    else:
-                        available_tools.append(self._search_tool.get_tool_definition())
+                available_tools = self._get_available_tool_schemas(model_config.provider)
 
                 # Only use tools if we have any available
                 if available_tools:
@@ -660,6 +692,29 @@ class LLMHandler:
 
                 return formatted_results
 
+            elif self._stock_tool and function_name in self._get_stock_function_names():
+                logger.info(
+                    "Executing stock market tool",
+                    extra={
+                        "function_name": function_name,
+                        "arguments": arguments,
+                    },
+                )
+                stock_result = await self._stock_tool.execute_tool_call(function_name, arguments)
+                formatted_result = self._format_stock_tool_result(function_name, stock_result)
+                logger.info(
+                    "Stock market tool completed",
+                    extra={
+                        "function_name": function_name,
+                        "formatted_length": len(formatted_result),
+                    },
+                )
+                return formatted_result
+
+            elif function_name in self._get_stock_function_names():
+                logger.warning("Stock tool requested but Polygon API key is not configured")
+                return "Error: Stock market tools are not available (Polygon API key is not configured)"
+
             else:
                 logger.warning(f"Unknown tool function requested: {function_name}")
                 return f"Error: Unknown tool function: {function_name}"
@@ -674,6 +729,55 @@ class LLMHandler:
                 exc_info=True,
             )
             return f"Error executing tool: {type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _get_stock_function_names() -> set[str]:
+        return {
+            "get_stock_price",
+            "search_stocks",
+            "get_market_status",
+            "get_stock_rsi",
+            "get_stock_sma",
+            "get_stock_ema",
+            "get_stock_macd",
+            "detect_golden_cross",
+        }
+
+    def _format_stock_tool_result(self, function_name: str, data: Dict[str, Any]) -> str:
+        """Format stock tool output into text for the model."""
+
+        if not self._stock_tool:
+            return json.dumps(data, indent=2)
+
+        formatters = {
+            "get_stock_price": self._stock_tool.format_price_response,
+            "search_stocks": self._stock_tool.format_search_response,
+            "get_market_status": self._stock_tool.format_market_status_response,
+            "get_stock_rsi": self._stock_tool.format_rsi_response,
+            "get_stock_sma": self._stock_tool.format_sma_response,
+            "get_stock_ema": self._stock_tool.format_ema_response,
+            "get_stock_macd": self._stock_tool.format_macd_response,
+        }
+
+        formatter = formatters.get(function_name)
+        if formatter:
+            return formatter(data)
+
+        if function_name == "detect_golden_cross":
+            if "error" in data:
+                return f"❌ {data['error']}"
+
+            crossover = data.get("crossover") or "No crossover"
+            return (
+                f"{data.get('ticker', 'N/A')} golden/death cross analysis: "
+                f"{data.get('signal', 'unknown')} ({data.get('alignment', 'unknown')} alignment). "
+                f"50-day SMA: ${data.get('sma_50', 0):.2f}; "
+                f"200-day SMA: ${data.get('sma_200', 0):.2f}; "
+                f"Crossover: {crossover}. "
+                f"{data.get('interpretation', '')}"
+            )
+
+        return json.dumps(data, indent=2)
 
     def _record_metrics(self, metrics: RequestMetrics) -> None:
         """Store metrics while trimming entries beyond the retention window."""

@@ -25,6 +25,7 @@ class LLM(commands.Cog):
             openrouter_app_name=config.settings.openrouter_app_name,
             tavily_api_key=config.settings.tavily_api_key,
             searxng_url=config.settings.searxng_url,
+            polygon_api_key=config.settings.polygon_api_key,
         )
 
         self._background_tasks: Set[asyncio.Task] = set()
@@ -51,7 +52,7 @@ class LLM(commands.Cog):
                 stop=["User:", "Assistant:"],
                 max_tokens=2048,
                 timeout=180,  # Shorter timeout for chat responses
-                supports_tools=True  # This model doesn't support tool calling
+                supports_tools=False  # This model doesn't support tool calling
             )
         }
 

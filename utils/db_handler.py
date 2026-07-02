@@ -427,6 +427,36 @@ class DatabaseHandler:
         updated_by_guild_id: Optional[int] = None,
     ) -> None:
         async with self._connect() as conn:
+            if guild_id is None:
+                cursor = await conn.execute(
+                    """
+                    UPDATE prompts
+                    SET system_prompt = ?,
+                        last_updated = CURRENT_TIMESTAMP,
+                        updated_by_user_id = ?,
+                        updated_by_guild_id = ?
+                    WHERE guild_id IS NULL AND model_name = ?
+                    """,
+                    (system_prompt, updated_by_user_id, updated_by_guild_id, model_name),
+                )
+                if cursor.rowcount == 0:
+                    await conn.execute(
+                        """
+                        INSERT INTO prompts (
+                            guild_id,
+                            model_name,
+                            system_prompt,
+                            last_updated,
+                            updated_by_user_id,
+                            updated_by_guild_id
+                        )
+                        VALUES (NULL, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                        """,
+                        (model_name, system_prompt, updated_by_user_id, updated_by_guild_id),
+                    )
+                await conn.commit()
+                return
+
             await conn.execute(
                 """
                 INSERT INTO prompts (guild_id, model_name, system_prompt, last_updated, updated_by_user_id, updated_by_guild_id)

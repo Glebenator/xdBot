@@ -169,6 +169,18 @@ class TavilySearchTool:
             await self._session.close()
             self._session = None
 
+    @staticmethod
+    def get_tool_definition() -> Dict[str, Any]:
+        """Get the OpenAI/OpenRouter function definition for Tavily search."""
+
+        return WebSearchTool.get_tool_definition()
+
+    @staticmethod
+    def get_ollama_tool_definition() -> Dict[str, Any]:
+        """Get the Ollama-compatible function definition for Tavily search."""
+
+        return WebSearchTool.get_ollama_tool_definition()
+
     async def search(
         self,
         query: str,
