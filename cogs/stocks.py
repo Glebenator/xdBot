@@ -250,7 +250,7 @@ class Stocks(commands.Cog):
 
         return embed
 
-    @commands.hybrid_command(name="stock", aliases=["quote", "price"])
+    @commands.hybrid_command(name="stock", aliases=["stockquote", "price"])
     async def stock_price(self, ctx, ticker: str):
         """Get the latest stock price for a ticker.
 
