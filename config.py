@@ -27,6 +27,7 @@ DEFAULT_OLLAMA_CHAT_MODEL = "qwen3:4b"
 DEFAULT_OLLAMA_MENTION_MODEL = "xdbot-rude"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_APP_NAME = "xdBot"
+DEFAULT_SEARXNG_URL = "http://192.168.50.69:8888"
 DEFAULT_MUSIC_MAX_QUEUE_SIZE = 100
 DEFAULT_MUSIC_IDLE_TIMEOUT = 300
 DEFAULT_MUSIC_DEFAULT_VOLUME = 0.5
@@ -84,6 +85,7 @@ class Settings:
     openrouter_app_name: str = DEFAULT_OPENROUTER_APP_NAME
     openrouter_default_model: Optional[str] = None
     tavily_api_key: Optional[str] = None
+    searxng_url: str = DEFAULT_SEARXNG_URL
     polygon_api_key: Optional[str] = None
 
     # Music settings
@@ -107,6 +109,10 @@ class Settings:
     @property
     def tavily_enabled(self) -> bool:
         return bool(self.tavily_api_key)
+
+    @property
+    def searxng_enabled(self) -> bool:
+        return bool(self.searxng_url)
 
     @property
     def polygon_enabled(self) -> bool:
@@ -137,6 +143,7 @@ def _load_settings() -> Settings:
     openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", DEFAULT_OPENROUTER_APP_NAME)
     openrouter_default_model = os.getenv("OPENROUTER_DEFAULT_MODEL") or None
     tavily_api_key = os.getenv("TAVILY_API_KEY") or None
+    searxng_url = os.getenv("SEARXNG_URL", DEFAULT_SEARXNG_URL)
     polygon_api_key = os.getenv("POLYGON_API_KEY") or None
     music_max_queue_size = _parse_int(os.getenv("MUSIC_MAX_QUEUE_SIZE")) or DEFAULT_MUSIC_MAX_QUEUE_SIZE
     music_idle_timeout = _parse_int(os.getenv("MUSIC_IDLE_TIMEOUT")) or DEFAULT_MUSIC_IDLE_TIMEOUT
@@ -162,6 +169,7 @@ def _load_settings() -> Settings:
         openrouter_app_name=openrouter_app_name,
         openrouter_default_model=openrouter_default_model,
         tavily_api_key=tavily_api_key,
+        searxng_url=searxng_url,
         polygon_api_key=polygon_api_key,
         music_max_queue_size=music_max_queue_size,
         music_idle_timeout=music_idle_timeout,

@@ -24,6 +24,7 @@ class LLM(commands.Cog):
             openrouter_site_url=config.settings.openrouter_site_url,
             openrouter_app_name=config.settings.openrouter_app_name,
             tavily_api_key=config.settings.tavily_api_key,
+            searxng_url=config.settings.searxng_url,
         )
 
         self._background_tasks: Set[asyncio.Task] = set()

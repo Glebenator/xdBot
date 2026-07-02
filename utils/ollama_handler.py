@@ -131,6 +131,7 @@ class LLMHandler:
         openrouter_app_name: Optional[str] = None,
         metrics_retention_minutes: int = 1440,
         tavily_api_key: Optional[str] = None,
+        searxng_url: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.max_context_messages = max_context_messages
@@ -141,6 +142,7 @@ class LLMHandler:
         self.openrouter_app_name = openrouter_app_name
         self.metrics_retention_minutes = metrics_retention_minutes
         self.tavily_api_key = tavily_api_key
+        self.searxng_url = searxng_url
 
         self.conversation_history: Dict[int, Dict[str, deque[Message]]] = {}
         self.model_configs: Dict[str, ModelConfig] = {}
@@ -149,11 +151,14 @@ class LLMHandler:
         self._lock = asyncio.Lock()
         self._last_cleanup = datetime.now()
 
-        # Initialize search tool if API key is available
+        # Initialize search tool — SearXNG primary, Tavily fallback
         self._search_tool: Optional[Any] = None
-        if tavily_api_key:
-            from utils.search_tool import TavilySearchTool
-            self._search_tool = TavilySearchTool(api_key=tavily_api_key)
+        if searxng_url or tavily_api_key:
+            from utils.search_tool import WebSearchTool
+            self._search_tool = WebSearchTool(
+                searxng_url=searxng_url,
+                tavily_api_key=tavily_api_key,
+            )
 
     def register_model(self, key: str, config: ModelConfig) -> None:
         """Register or replace a model configuration under a logical key."""
@@ -616,8 +621,8 @@ class LLMHandler:
             # Execute the appropriate tool
             if function_name == "tavily_search":
                 if not self._search_tool:
-                    logger.warning("Search tool requested but Tavily API key not configured")
-                    return "Error: Search tool is not available (Tavily API key not configured)"
+                    logger.warning("Search tool requested but no search backend configured")
+                    return "Error: Search tool is not available (no search backend configured)"
 
                 query = arguments.get("query", "")
                 max_results = arguments.get("max_results", 5)
@@ -625,7 +630,7 @@ class LLMHandler:
                 topic = arguments.get("topic", "general")
 
                 logger.info(
-                    "Executing Tavily search",
+                    "Executing web search",
                     extra={
                         "query": query,
                         "max_results": max_results,
