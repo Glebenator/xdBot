@@ -11,11 +11,29 @@ from discord.ext import commands
 from utils.helpers import create_embed, defer_hybrid
 
 
+def _load_face_mesh_module():
+    """Load MediaPipe FaceMesh from either legacy public import shape."""
+    solutions = getattr(mp, "solutions", None)
+    face_mesh = getattr(solutions, "face_mesh", None) if solutions else None
+    if face_mesh is not None:
+        return face_mesh
+
+    try:
+        from mediapipe.python.solutions import face_mesh as legacy_face_mesh
+    except ImportError as exc:
+        raise RuntimeError(
+            "MediaPipe FaceMesh is unavailable. Install a mediapipe version that "
+            "includes mediapipe.python.solutions.face_mesh."
+        ) from exc
+
+    return legacy_face_mesh
+
+
 class ImageProcessing(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # Initialize MediaPipe Face Mesh
-        self.mp_face_mesh = mp.solutions.face_mesh
+        self.mp_face_mesh = _load_face_mesh_module()
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             static_image_mode=True,
             max_num_faces=10,
@@ -170,7 +188,8 @@ class ImageProcessing(commands.Cog):
 
     def cog_unload(self):
         """Cleanup when cog is unloaded"""
-        self.face_mesh.close()
+        if hasattr(self, "face_mesh"):
+            self.face_mesh.close()
 
 async def setup(bot):
     await bot.add_cog(ImageProcessing(bot))
