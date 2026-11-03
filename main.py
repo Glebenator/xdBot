@@ -39,7 +39,9 @@ class DiscordBot(commands.Bot):
         super().__init__(
             command_prefix=commands.when_mentioned_or(config.settings.prefix),
             intents=intents,
-            help_command=None  # We can create a custom help command later
+            help_command=None,  # We can create a custom help command later
+            # OWNER_IDS grants !reload and !sync; when empty, discord.py uses the application owner.
+            owner_ids=set(config.settings.owner_ids),
         )
 
     async def setup_hook(self):
