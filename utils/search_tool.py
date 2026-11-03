@@ -19,7 +19,7 @@ class SearXNGSearchTool:
 
     def __init__(
         self,
-        base_url: str = "http://192.168.50.69:8888",
+        base_url: str = "http://localhost:8888",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._session: Optional[aiohttp.ClientSession] = None

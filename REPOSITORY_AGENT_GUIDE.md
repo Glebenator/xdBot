@@ -63,7 +63,8 @@ Important env vars:
   - `POLYGON_API_KEY`
 
 Current note from code:
-- `config.py` default `OLLAMA_URL` is `http://192.168.50.69:11434`.
+- `config.py` defaults `OLLAMA_URL` to `http://localhost:11434` and `SEARXNG_URL` to `http://localhost:8888`.
+- `OLLAMA_MENTION_MODEL` falls back to `OLLAMA_CHAT_MODEL` when unset or empty.
 
 Music settings are currently in `Settings` with defaults:
 - `music_max_queue_size=100`

@@ -22,12 +22,14 @@ except Exception:  # pragma: no cover - dotenv is optional at runtime
 DEFAULT_PREFIX = "!"
 DEFAULT_OWNER_IDS: List[int] = []
 DEFAULT_GUILD_ID: Optional[int] = None
-DEFAULT_OLLAMA_URL = "http://192.168.50.69:11434"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_CHAT_MODEL = "qwen3:4b"
-DEFAULT_OLLAMA_MENTION_MODEL = "xdbot-rude"
+# Replies to @mentions use the chat model unless OLLAMA_MENTION_MODEL names another,
+# such as a custom persona built from an Ollama Modelfile.
+DEFAULT_OLLAMA_MENTION_MODEL = DEFAULT_OLLAMA_CHAT_MODEL
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_APP_NAME = "xdBot"
-DEFAULT_SEARXNG_URL = "http://192.168.50.69:8888"
+DEFAULT_SEARXNG_URL = "http://localhost:8888"
 DEFAULT_MUSIC_MAX_QUEUE_SIZE = 100
 DEFAULT_MUSIC_IDLE_TIMEOUT = 300
 DEFAULT_MUSIC_DEFAULT_VOLUME = 0.5
@@ -136,7 +138,7 @@ def _load_settings() -> Settings:
     random_org_api_key = os.getenv("RANDOM_ORG_KEY")
     ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
     ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", DEFAULT_OLLAMA_CHAT_MODEL)
-    ollama_mention_model = os.getenv("OLLAMA_MENTION_MODEL", DEFAULT_OLLAMA_MENTION_MODEL)
+    ollama_mention_model = os.getenv("OLLAMA_MENTION_MODEL") or DEFAULT_OLLAMA_MENTION_MODEL
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
     openrouter_base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
     openrouter_site_url = os.getenv("OPENROUTER_SITE_URL") or None
