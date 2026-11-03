@@ -5,10 +5,15 @@ services:
       dockerfile: Dockerfile
     container_name: discord_bot
     restart: unless-stopped
-    environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
+    # Settings come from .env (see .env.example); the image never contains it.
+    env_file: .env
+    # Only the bot's state is mounted, so the image runs the code it was built with.
     volumes:
-      - ./:/app
+      - ./data:/app/data
+    # Lets OLLAMA_URL and SEARXNG_URL point at services on the Docker host,
+    # e.g. http://host.docker.internal:11434.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - discord_bot_network
     logging:
