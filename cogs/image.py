@@ -22,8 +22,8 @@ def _load_face_mesh_module():
         from mediapipe.python.solutions import face_mesh as legacy_face_mesh
     except ImportError as exc:
         raise RuntimeError(
-            "MediaPipe FaceMesh is unavailable. Install a mediapipe version that "
-            "includes mediapipe.python.solutions.face_mesh."
+            "MediaPipe FaceMesh is unavailable. Install the mediapipe version pinned in "
+            "requirements.txt; releases from 0.10.30 on no longer include FaceMesh."
         ) from exc
 
     return legacy_face_mesh
