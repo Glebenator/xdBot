@@ -23,7 +23,7 @@
 - Image transformations (`cogs/image.py`) depend on OpenCV + MediaPipe; keep heavy processing inside `await ctx.defer()` blocks and clean up temp files after sending results.
 
 ## Developer workflows & ops
-- Local run: create a virtualenv, `pip install -r requirements.txt`, set secrets in `.env`, then launch with `python main.py`; Docker users can run `docker-compose up --build` which mirrors that setup.
+- Local run: create a virtualenv, `pip install -r requirements.txt`, set secrets in `.env`, then launch with `python main.py`; Docker users run `docker compose up -d --build`, which passes `.env` as environment variables and mounts only `./data`. See `AGENTS.md` for the full runtime reference.
 - Use `python -m compileall .` for fast syntax validation and the owner-only in-chat commands `!reload <cog>` / `!sync` (see `cogs/admin.py`) to iterate without restarting the bot.
 - Slash-command registration happens in `DiscordBot.setup_hook` via `self.tree.sync()`, so expect a sync on startup; manual resync is rarely needed unless commands were added or permissions changed.
 - Adopt the shared logging approach: `main.py` configures structured output, so new modules should declare `logger = logging.getLogger(__name__)` and avoid `print` in favour of structured log calls with useful context.

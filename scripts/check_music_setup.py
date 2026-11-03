@@ -5,8 +5,12 @@ This script checks if all dependencies and modules are correctly installed
 and importable before running the bot.
 """
 
+import os
 import subprocess
 import sys
+
+# Run from anywhere: import the bot from the repo root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def check_python_version():

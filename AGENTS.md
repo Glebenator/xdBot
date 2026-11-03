@@ -1,6 +1,6 @@
 # xdBot Repository Agent Guide
 
-This file replaces prior project markdown notes with one current, execution-focused reference.
+This is the execution-focused reference for agents. `README.md` is the user-facing guide; `.github/copilot-instructions.md` holds the coding conventions.
 
 ## What This Repository Is
 
@@ -9,7 +9,7 @@ This file replaces prior project markdown notes with one current, execution-focu
 Core capabilities:
 - Discord hybrid commands (prefix + slash) across multiple cogs
 - Async SQLite persistence with automatic schema checks/migrations
-- Optional LLM responses (Ollama and/or OpenRouter) with tool calling and Tavily search support
+- Optional LLM responses (Ollama and/or OpenRouter) with tool calling and web search (SearXNG first, Tavily as the fallback)
 - Music playback (voice join/playback/queue basics) via `yt-dlp`, `PyNaCl`, and FFmpeg
 - Stock market commands and technical indicators via Polygon.io
 - Misc utility/fun/admin/moderation/reply features
@@ -96,30 +96,30 @@ Database handler: `utils/db_handler.py`
 
 ## Dependencies and Runtime Requirements
 
-From `requirements.txt`:
-- `discord.py`, `python-dotenv`, `aiohttp`, `aiosqlite`
+`requirements.txt` pins exact versions that pass the suite on Python 3.11:
+- `discord.py[voice]` (brings `PyNaCl` and `davey`; without `davey` voice is off), `python-dotenv`, `aiohttp`, `aiosqlite`
 - `numpy`, `matplotlib`
-- `opencv-python-headless`, `mediapipe`
-- `yt-dlp`, `PyNaCl`
+- `opencv-python-headless`, `mediapipe` (held at 0.10.21: later releases dropped the FaceMesh solution that `cogs/image.py` uses)
+- `yt-dlp`
+
+Raise a pin on purpose and run `make check`.
 
 System requirement for music:
 - FFmpeg must be available in runtime environment.
 - Included in `Dockerfile` install list.
 
 Containerization:
-- `Dockerfile`: Python 3.11 slim, installs FFmpeg + required system libs, then `pip install -r requirements.txt`, runs `python main.py`.
-- `docker-compose.yml`: single service `discord-bot`, mounts repo into `/app`, injects `DISCORD_TOKEN`.
+- `Dockerfile`: two stages on Python 3.11 slim. The build stage installs `requirements.txt` into `/opt/venv` (gcc only here); the runtime stage adds FFmpeg, libGL and GLib, copies the venv, and runs `python main.py` as the unprivileged `bot` user (UID/GID 1000, build args `UID`/`GID`), which owns `data/`.
+- `.dockerignore` keeps `.env`, local state in `data/`, tests and scripts out of the image.
+- `docker-compose.yml`: single service `discord-bot`, `env_file: .env`, mounts only `./data`, and maps `host.docker.internal` to the Docker host.
 
 ## Tests and Verification Artifacts
 
-Repository includes focused scripts/tests:
-- `test_music_setup.py` (pre-flight checks for music modules/deps/config/db)
-- `test_chart_generation.py`
-- `test_search_tool.py`
-- `test_tool_selection.py`
-- `test_voice_error.py`
-
-These are useful smoke/regression entry points before deeper refactors.
+- `tests/`: unit tests, run by `make test` and CI.
+- `tests/integration/`: tests marked `integration` that need network access or API keys (chart generation, search, voice). Skipped by default; run with `pytest -m integration`.
+- `scripts/check_music_setup.py`: pre-flight check of the music modules, dependencies, config and database.
+- `scripts/demo_logging.py`: shows the LLM and search logging output.
+- `scripts/tool_selection_demo.py`: sample queries for checking which tools the chat model picks.
 
 ## Practical Agent Workflow for This Repo
 
@@ -132,7 +132,7 @@ These are useful smoke/regression entry points before deeper refactors.
 
 2. Fast validation:
 - `python -m compileall .`
-- `python test_music_setup.py` (if touching voice/music)
+- `python scripts/check_music_setup.py` (if touching voice/music)
 
 3. Runtime validation:
 - `python main.py`

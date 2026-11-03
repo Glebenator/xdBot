@@ -2,11 +2,12 @@
 """Test script to reproduce and diagnose the FFmpeg error."""
 
 import asyncio
+import os
 import sys
 
 import pytest
 
-sys.path.insert(0, '.')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Force clean import
 for mod in list(sys.modules.keys()):
