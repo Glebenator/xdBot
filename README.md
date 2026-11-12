@@ -64,7 +64,7 @@ If Docker is installed at a different path, update both `ExecStart` lines in the
 | --- | --- |
 | Games | `успех`, `успехстат`, `топ`, `roll`, `огурчик`, `увлажнение`, `logitech`, `razer` |
 | General | `help`, `ping` |
-| Music | `join`, `play`, `pause`, `resume`, `skip`, `stop`, `volume`, `leave` |
+| Music | `join`, `play`, `queue`, `nowplaying`, `pause`, `resume`, `skip`, `stop`, `volume`, `leave` |
 | Quote Hall | `quote add`, `quote random`, `quote user`, `quote list`, `quote delete`. Use `!quote` or `/quote show` for a random quote. |
 | Auto-replies | `listreplies`, `addreply`, `addreaction`, `removereply` |
 | Word tracking | `addword`, `removeword`, `wordstats`, `wordleaderboard` |

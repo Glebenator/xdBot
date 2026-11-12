@@ -31,6 +31,8 @@ class General(commands.Cog):
             return "📈 Stock Market"
         elif cog_name == "Quotes":
             return "Quote Hall"
+        elif cog_name == "Music":
+            return "Music"
         else:
             return "Misc"
 

@@ -3,8 +3,10 @@
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import BoundedSemaphore
 from urllib.parse import parse_qs, urlsplit
 
 import discord
@@ -28,6 +30,8 @@ YTDL_OPTIONS = {
     "logger": logger,
 }
 EXTRACTORS = ThreadPoolExecutor(max_workers=3, thread_name_prefix="youtube")
+# Leave one extractor thread available for tracks that are ready to play.
+REQUEST_SLOTS = BoundedSemaphore(2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +43,26 @@ class Track:
     @property
     def webpage_url(self) -> str:
         return f"https://www.youtube.com/watch?v={self.video_id}"
+
+
+class MusicAudio(discord.PCMVolumeTransformer):
+    def __init__(self, source: discord.AudioSource, volume: float):
+        super().__init__(source, volume=volume)
+        self.on_first_frame: Callable[[], None] | None = None
+
+    def read(self) -> bytes:
+        frame = super().read()
+        if frame:
+            if self.on_first_frame is not None:
+                callback = self.on_first_frame
+                self.on_first_frame = None
+                callback()
+        else:
+            # discord.py 2.7.1 checks the wrapper for errors from FFmpeg.
+            error = getattr(self.original, "_current_error", None)
+            if error is not None:
+                raise error
+        return frame
 
 
 def youtube_query(query: str) -> str:
@@ -81,10 +105,21 @@ def _extract(query: str) -> dict:
     return data
 
 
-async def _video_data(query: str) -> dict:
+async def _video_data(query: str, *, request: bool = False) -> dict:
+    query = youtube_query(query)
+    if request and not REQUEST_SLOTS.acquire(blocking=False):
+        raise MusicError("YouTube requests are busy. Try again in a moment.")
     try:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(EXTRACTORS, _extract, youtube_query(query))
+        future = EXTRACTORS.submit(_extract, query)
+    except BaseException:
+        if request:
+            REQUEST_SLOTS.release()
+        raise
+    if request:
+        # A canceled command can leave yt-dlp running in its thread.
+        future.add_done_callback(lambda _: REQUEST_SLOTS.release())
+    try:
+        return await asyncio.wrap_future(future)
     except yt_dlp.utils.YoutubeDLError:
         logger.warning("YouTube could not resolve a video")
         raise MusicError("YouTube could not load that video.") from None
@@ -98,10 +133,10 @@ def _track(data: dict) -> Track:
 
 
 async def resolve_track(query: str) -> Track:
-    return _track(await _video_data(query))
+    return _track(await _video_data(query, request=True))
 
 
-async def open_audio(track: Track, volume: float) -> discord.PCMVolumeTransformer:
+async def open_audio(track: Track, volume: float) -> MusicAudio:
     data = await _video_data(track.webpage_url)
     _track(data)
     stream_url = data.get("url") or ""
@@ -118,4 +153,4 @@ async def open_audio(track: Track, volume: float) -> discord.PCMVolumeTransforme
         ),
         options="-vn",
     )
-    return discord.PCMVolumeTransformer(source, volume=volume)
+    return MusicAudio(source, volume)

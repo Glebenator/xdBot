@@ -21,7 +21,8 @@ async def test_all_cogs_load_and_register_retained_commands(monkeypatch, tmp_pat
             "cogs.music", "cogs.quotes", "cogs.replies", "cogs.stocks",
         }
         retained = {"успех", "успехстат", "топ", "roll", "огурчик", "увлажнение",
-                    "logitech", "razer", "quote", "stock", "play", "addreply", "addword"}
+                    "logitech", "razer", "quote", "stock", "play", "queue", "nowplaying",
+                    "addreply", "addword"}
         assert retained <= {command.name for command in bot.commands}
         assert retained <= {command.name for command in bot.tree.get_commands()}
         assert bot.get_command("stockquote") is bot.get_command("stock")
