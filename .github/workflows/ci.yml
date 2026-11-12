@@ -32,9 +32,6 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/botv2'
     needs: quality
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,16 +45,17 @@ jobs:
       - name: Publish tested image
         shell: bash
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           current_sha=$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)
           if [ "$current_sha" != "$GITHUB_SHA" ]; then
             echo "A newer revision is on the release branch."
             exit 0
           fi
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          image="docker.io/coolcake/xd-bot"
+          printf '%s' "$HUB_TOKEN" | docker login docker.io -u "$HUB_USER" --password-stdin
           docker tag xdbot:check "$image:sha-$GITHUB_SHA"
           docker push "$image:sha-$GITHUB_SHA"
-          docker tag xdbot:check "$image:latest"
-          docker push "$image:latest"
+          docker tag xdbot:check "$image:refresh"
+          docker push "$image:refresh"

@@ -4,12 +4,12 @@ xdBot is a Discord bot with games, music, stock data, Quote Hall, auto-replies, 
 
 ## Deploy on a Linux server
 
-GitHub Actions tests each change. A push to `botv2` also builds the image and checks that the bot, FFmpeg, and Deno start in it. GitHub Container Registry (GHCR) stores the tested image at `ghcr.io/glebenator/xdbot` with the tags `latest` and `sha-<full-commit-sha>`. The Linux service checks for an updated image every five minutes.
+GitHub Actions tests each change. A push to `botv2` also builds the image and checks that the bot, FFmpeg, and Deno start in it. Docker Hub stores the tested image at `docker.io/coolcake/xd-bot` with the tags `refresh` and `sha-<full-commit-sha>`. The Linux service checks for an updated image every five minutes.
 
 ### First release
 
 1. Push the release to `botv2`. Wait for **CI and image release** to complete in GitHub Actions.
-2. Open the `xdbot` package settings in GitHub. Make the package public if the server must pull without credentials. For a private package, log in to GHCR on the server as root with a classic token that has `read:packages`. The systemd service uses root's Docker credentials.
+2. Set the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` GitHub Actions secrets for a Docker Hub account that can publish to `coolcake/xd-bot`. The server can pull from this public repository without a registry login.
 3. Make sure the server has Docker Engine and the Docker Compose plugin. The published image uses Linux x86-64. Run the commands below from a copy of this repository on the server.
 
 ```sh
@@ -42,7 +42,7 @@ sudo docker compose ps
 sudo docker compose logs -f discord-bot
 ```
 
-If Docker is installed at a different path, update both `ExecStart` lines in the service before you install it. To change the update schedule, edit the timer. To use an earlier refresh release, set `XDBOT_IMAGE=ghcr.io/glebenator/xdbot:sha-<full-commit-sha>` in `/opt/xdbot/.env` and start the service again. Remove the setting to resume updates to `latest`. If you return to an older database format, stop the bot and restore the backup first.
+If Docker is installed at a different path, update both `ExecStart` lines in the service before you install it. To change the update schedule, edit the timer. To use an earlier refresh release, set `XDBOT_IMAGE=docker.io/coolcake/xd-bot:sha-<full-commit-sha>` in `/opt/xdbot/.env` and start the service again. Remove the setting to resume updates to `refresh`. If you return to an older database format, stop the bot and restore the backup first.
 
 ### Configuration
 

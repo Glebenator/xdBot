@@ -2,9 +2,11 @@ name: xdbot
 
 services:
   discord-bot:
-    image: "${XDBOT_IMAGE:-ghcr.io/glebenator/xdbot:latest}"
+    image: "${XDBOT_IMAGE:-docker.io/coolcake/xd-bot:refresh}"
     restart: unless-stopped
     init: true
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     stop_grace_period: 30s
     env_file: .env
     volumes:
