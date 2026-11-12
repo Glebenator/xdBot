@@ -1,120 +1,65 @@
-"""Centralised application configuration.
-
-This module exposes a `settings` instance that gathers configuration from
-environment variables (with sensible defaults) so that the rest of the code
-base does not need to touch `os.environ` directly.
-"""
-
-from __future__ import annotations
+"""Load bot settings from the environment."""
 
 import os
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
+from pathlib import Path
 
-try:  # Ensure .env files are loaded before reading environment variables
-    from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-    load_dotenv()  # type: ignore[no-untyped-call]
-except Exception:  # pragma: no cover - dotenv is optional at runtime
-    pass
+load_dotenv()
 
 
-DEFAULT_PREFIX = "!"
-DEFAULT_OWNER_IDS: List[int] = []
-DEFAULT_GUILD_ID: Optional[int] = None
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_CHAT_MODEL = "qwen3:4b"
-# Replies to @mentions use the chat model unless OLLAMA_MENTION_MODEL names another,
-# such as a custom persona built from an Ollama Modelfile.
-DEFAULT_OLLAMA_MENTION_MODEL = DEFAULT_OLLAMA_CHAT_MODEL
-DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_OPENROUTER_APP_NAME = "xdBot"
-DEFAULT_SEARXNG_URL = "http://localhost:8888"
-DEFAULT_MUSIC_MAX_QUEUE_SIZE = 100
-DEFAULT_MUSIC_IDLE_TIMEOUT = 300
-DEFAULT_MUSIC_DEFAULT_VOLUME = 0.5
-DEFAULT_MUSIC_MAX_DURATION = 3600
-
-
-def _parse_int(value: Optional[str]) -> Optional[int]:
-    if value is None or not value.strip():
-        return None
-    try:
-        return int(value.strip())
-    except ValueError:
-        return None
-
-
-def _parse_owner_ids(value: Optional[str]) -> List[int]:
-    if not value:
-        return []
-    owners: List[int] = []
-    for piece in value.split(","):
-        piece = piece.strip()
-        if not piece:
-            continue
-        try:
-            owners.append(int(piece))
-        except ValueError:
-            continue
-    return owners
-
-
-def _parse_float(value: Optional[str], default: float) -> float:
+def _int_setting(name: str, default: int, minimum: int = 1) -> int:
+    value = os.getenv(name)
     if value is None or not value.strip():
         return default
     try:
-        return float(value.strip())
+        number = int(value)
     except ValueError:
-        return default
+        raise ValueError(f"{name} must be an integer.") from None
+    if number < minimum:
+        raise ValueError(f"{name} must be at least {minimum}.")
+    return number
+
+
+def _volume_setting() -> float:
+    value = os.getenv("MUSIC_DEFAULT_VOLUME", "").strip()
+    try:
+        volume = float(value) if value else 0.5
+    except ValueError:
+        raise ValueError("MUSIC_DEFAULT_VOLUME must be a number.") from None
+    if not 0 <= volume <= 1:
+        raise ValueError("MUSIC_DEFAULT_VOLUME must be between 0 and 1.")
+    return volume
+
+
+def _owner_ids() -> set[int]:
+    try:
+        ids = {int(value) for value in os.getenv("OWNER_IDS", "").split(",") if value.strip()}
+    except ValueError:
+        raise ValueError("OWNER_IDS must contain comma-separated Discord user IDs.") from None
+    if any(value <= 0 for value in ids):
+        raise ValueError("OWNER_IDS must contain positive Discord user IDs.")
+    return ids
 
 
 @dataclass(slots=True)
 class Settings:
-    """Runtime configuration container."""
-
-    prefix: str = DEFAULT_PREFIX
-    owner_ids: List[int] = field(default_factory=list)
-    guild_id: Optional[int] = DEFAULT_GUILD_ID
-    discord_token: Optional[str] = None
-    random_org_api_key: Optional[str] = None
-    ollama_url: str = DEFAULT_OLLAMA_URL
-    ollama_chat_model: str = DEFAULT_OLLAMA_CHAT_MODEL
-    ollama_mention_model: str = DEFAULT_OLLAMA_MENTION_MODEL
-    openrouter_api_key: Optional[str] = None
-    openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
-    openrouter_site_url: Optional[str] = None
-    openrouter_app_name: str = DEFAULT_OPENROUTER_APP_NAME
-    openrouter_default_model: Optional[str] = None
-    tavily_api_key: Optional[str] = None
-    searxng_url: str = DEFAULT_SEARXNG_URL
-    polygon_api_key: Optional[str] = None
-
-    # Music settings
-    music_max_queue_size: int = DEFAULT_MUSIC_MAX_QUEUE_SIZE
-    music_idle_timeout: int = DEFAULT_MUSIC_IDLE_TIMEOUT  # seconds (5 minutes)
-    music_default_volume: float = DEFAULT_MUSIC_DEFAULT_VOLUME  # 0.0 to 1.0
-    music_max_duration: int = DEFAULT_MUSIC_MAX_DURATION  # seconds (1 hour)
+    prefix: str
+    owner_ids: set[int]
+    discord_token: str | None
+    random_org_api_key: str | None
+    polygon_api_key: str | None
+    data_dir: Path
+    ready_file: Path | None
+    music_max_queue_size: int
+    music_idle_timeout: int
+    music_default_volume: float
+    music_max_duration: int
 
     @property
     def random_org_enabled(self) -> bool:
         return bool(self.random_org_api_key)
-
-    @property
-    def has_discord_token(self) -> bool:
-        return bool(self.discord_token)
-
-    @property
-    def openrouter_enabled(self) -> bool:
-        return bool(self.openrouter_api_key)
-
-    @property
-    def tavily_enabled(self) -> bool:
-        return bool(self.tavily_api_key)
-
-    @property
-    def searxng_enabled(self) -> bool:
-        return bool(self.searxng_url)
 
     @property
     def polygon_enabled(self) -> bool:
@@ -122,61 +67,19 @@ class Settings:
 
 
 def _load_settings() -> Settings:
-    prefix = os.getenv("BOT_PREFIX", DEFAULT_PREFIX)
-
-    owner_ids_env = os.getenv("OWNER_IDS")
-    owner_ids = _parse_owner_ids(owner_ids_env)
-    if not owner_ids:
-        owner_ids = list(DEFAULT_OWNER_IDS)
-
-    guild_id_env = os.getenv("GUILD_ID")
-    guild_id = _parse_int(guild_id_env)
-    if guild_id is None:
-        guild_id = DEFAULT_GUILD_ID
-
-    discord_token = os.getenv("DISCORD_TOKEN")
-    random_org_api_key = os.getenv("RANDOM_ORG_KEY")
-    ollama_url = os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
-    ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", DEFAULT_OLLAMA_CHAT_MODEL)
-    ollama_mention_model = os.getenv("OLLAMA_MENTION_MODEL") or DEFAULT_OLLAMA_MENTION_MODEL
-    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-    openrouter_base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL)
-    openrouter_site_url = os.getenv("OPENROUTER_SITE_URL") or None
-    openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", DEFAULT_OPENROUTER_APP_NAME)
-    openrouter_default_model = os.getenv("OPENROUTER_DEFAULT_MODEL") or None
-    tavily_api_key = os.getenv("TAVILY_API_KEY") or None
-    searxng_url = os.getenv("SEARXNG_URL", DEFAULT_SEARXNG_URL)
-    polygon_api_key = os.getenv("POLYGON_API_KEY") or None
-    music_max_queue_size = _parse_int(os.getenv("MUSIC_MAX_QUEUE_SIZE")) or DEFAULT_MUSIC_MAX_QUEUE_SIZE
-    music_idle_timeout = _parse_int(os.getenv("MUSIC_IDLE_TIMEOUT")) or DEFAULT_MUSIC_IDLE_TIMEOUT
-    music_default_volume = _parse_float(
-        os.getenv("MUSIC_DEFAULT_VOLUME"),
-        DEFAULT_MUSIC_DEFAULT_VOLUME,
-    )
-    music_max_duration = _parse_int(os.getenv("MUSIC_MAX_DURATION")) or DEFAULT_MUSIC_MAX_DURATION
-    music_default_volume = max(0.0, min(1.0, music_default_volume))
-
+    ready_file = os.getenv("XDBOT_READY_FILE")
     return Settings(
-        prefix=prefix,
-        owner_ids=owner_ids,
-        guild_id=guild_id,
-        discord_token=discord_token,
-        random_org_api_key=random_org_api_key,
-        ollama_url=ollama_url,
-        ollama_chat_model=ollama_chat_model,
-        ollama_mention_model=ollama_mention_model,
-        openrouter_api_key=openrouter_api_key,
-        openrouter_base_url=openrouter_base_url,
-        openrouter_site_url=openrouter_site_url,
-        openrouter_app_name=openrouter_app_name,
-        openrouter_default_model=openrouter_default_model,
-        tavily_api_key=tavily_api_key,
-        searxng_url=searxng_url,
-        polygon_api_key=polygon_api_key,
-        music_max_queue_size=music_max_queue_size,
-        music_idle_timeout=music_idle_timeout,
-        music_default_volume=music_default_volume,
-        music_max_duration=music_max_duration,
+        prefix=os.getenv("BOT_PREFIX", "").strip() or "!",
+        owner_ids=_owner_ids(),
+        discord_token=os.getenv("DISCORD_TOKEN") or None,
+        random_org_api_key=os.getenv("RANDOM_ORG_KEY") or None,
+        polygon_api_key=os.getenv("POLYGON_API_KEY") or None,
+        data_dir=Path(os.getenv("XDBOT_DATA_DIR") or "data"),
+        ready_file=Path(ready_file) if ready_file else None,
+        music_max_queue_size=_int_setting("MUSIC_MAX_QUEUE_SIZE", 100),
+        music_idle_timeout=_int_setting("MUSIC_IDLE_TIMEOUT", 300),
+        music_default_volume=_volume_setting(),
+        music_max_duration=_int_setting("MUSIC_MAX_DURATION", 3600),
     )
 
 

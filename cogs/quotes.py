@@ -91,6 +91,8 @@ class Quotes(commands.Cog):
         if reference and reference.message_id:
             resolved = getattr(reference, "resolved", None)
             if isinstance(resolved, discord.Message):
+                if resolved.channel.id != ctx.channel.id:
+                    raise ValueError("Select a message from this channel.")
                 return resolved
 
             try:
@@ -109,6 +111,7 @@ class Quotes(commands.Cog):
 
         quote = await self.db.get_random_quote(
             guild_id,
+            channel_id=ctx.channel.id,
             quoted_user_id=user.id if user else None,
         )
         if not quote:
@@ -123,6 +126,7 @@ class Quotes(commands.Cog):
     @commands.hybrid_group(
         name="quote",
         invoke_without_command=True,
+        fallback="show",
         description="Show a random saved quote",
     )
     async def quote(self, ctx):
@@ -206,6 +210,7 @@ class Quotes(commands.Cog):
         limit = max(1, min(limit, 10))
         quotes = await self.db.list_quotes(
             guild_id,
+            channel_id=ctx.channel.id,
             quoted_user_id=user.id if user else None,
             limit=limit,
         )
@@ -236,7 +241,7 @@ class Quotes(commands.Cog):
             await ctx.send("Quote Hall only works in a server.")
             return
 
-        quote = await self.db.get_quote(guild_id, quote_id)
+        quote = await self.db.get_quote(guild_id, quote_id, channel_id=ctx.channel.id)
         if not quote:
             await ctx.send(f"Quote #{quote_id} was not found.")
             return
@@ -254,7 +259,7 @@ class Quotes(commands.Cog):
             await ctx.send("You can only delete quotes you saved or quotes attributed to you.")
             return
 
-        deleted = await self.db.delete_quote(guild_id, quote_id)
+        deleted = await self.db.delete_quote(guild_id, quote_id, channel_id=ctx.channel.id)
         if deleted:
             await ctx.send(f"Deleted quote #{quote_id}.")
         else:

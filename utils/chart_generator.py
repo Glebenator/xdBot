@@ -7,6 +7,7 @@ matplotlib.use('Agg')  # Use non-GUI backend
 import io
 import logging
 from datetime import datetime
+from threading import Lock
 from typing import Dict, List, Optional
 
 import matplotlib.dates as mdates
@@ -14,13 +15,19 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 logger = logging.getLogger(__name__)
+_plot_lock = Lock()
 
 
 class ChartGenerator:
     """Generate stock price charts."""
 
     @staticmethod
-    def create_price_chart(
+    def create_price_chart(ticker, data, chart_type="candlestick", indicators=None):
+        with _plot_lock:
+            return ChartGenerator._create_price_chart(ticker, data, chart_type, indicators)
+
+    @staticmethod
+    def _create_price_chart(
         ticker: str,
         data: List[Dict],
         chart_type: str = "candlestick",
@@ -180,6 +187,8 @@ class ChartGenerator:
             if indicator.startswith("sma_"):
                 try:
                     period = int(indicator.split("_")[1])
+                    if not 1 <= period <= len(closes):
+                        continue
                     sma = ChartGenerator._calculate_sma(closes, period)
                     ax.plot(
                         dates[period-1:],
@@ -194,9 +203,11 @@ class ChartGenerator:
             elif indicator.startswith("ema_"):
                 try:
                     period = int(indicator.split("_")[1])
+                    if not 1 <= period <= len(closes):
+                        continue
                     ema = ChartGenerator._calculate_ema(closes, period)
                     ax.plot(
-                        dates,
+                        dates[period - 1:],
                         ema,
                         label=f'EMA {period}',
                         linewidth=1.5,
@@ -219,25 +230,21 @@ class ChartGenerator:
     @staticmethod
     def _calculate_ema(data: List[float], period: int) -> List[float]:
         """Calculate Exponential Moving Average."""
-        ema = []
+        if not 1 <= period <= len(data):
+            return []
         multiplier = 2 / (period + 1)
-
-        # Start with SMA
-        sma = sum(data[:period]) / period
-        ema.append(sma)
-
-        # Calculate EMA
-        for i in range(1, len(data)):
-            if i < period:
-                ema.append(data[i])
-            else:
-                ema_value = (data[i] - ema[-1]) * multiplier + ema[-1]
-                ema.append(ema_value)
-
+        ema = [sum(data[:period]) / period]
+        for price in data[period:]:
+            ema.append(ema[-1] + (price - ema[-1]) * multiplier)
         return ema
 
     @staticmethod
     def create_comparison_chart(ticker_data: Dict[str, List[Dict]]) -> io.BytesIO:
+        with _plot_lock:
+            return ChartGenerator._create_comparison_chart(ticker_data)
+
+    @staticmethod
+    def _create_comparison_chart(ticker_data: Dict[str, List[Dict]]) -> io.BytesIO:
         """Create a comparison chart for multiple tickers.
 
         Args:

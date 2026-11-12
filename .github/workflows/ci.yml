@@ -1,37 +1,63 @@
-name: CI
+name: CI and image release
 
 on:
-  push:
-    branches:
-      - main
-      - botv2
   pull_request:
-  workflow_dispatch:
+  push:
+    branches: [botv2, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xdbot-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m compileall -q main.py config.py cogs utils tests
+      - run: python -m ruff check .
+      - run: python -m pytest
 
-      - name: Install dependencies
+  image:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/botv2'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and check image
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-
-      - name: Compile check
-        run: python -m compileall .
-
-      - name: Lint
-        run: python -m ruff check .
-
-      - name: Run tests
-        run: python -m pytest
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t xdbot:check .
+          docker run --rm --network none xdbot:check python main.py --check
+          docker run --rm --network none xdbot:check ffmpeg -version
+          docker run --rm --network none xdbot:check deno --version
+      - name: Publish tested image
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current_sha=$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)
+          if [ "$current_sha" != "$GITHUB_SHA" ]; then
+            echo "A newer revision is on the release branch."
+            exit 0
+          fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag xdbot:check "$image:sha-$GITHUB_SHA"
+          docker push "$image:sha-$GITHUB_SHA"
+          docker tag xdbot:check "$image:latest"
+          docker push "$image:latest"

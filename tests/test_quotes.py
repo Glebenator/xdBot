@@ -35,19 +35,22 @@ def test_quote_storage_lifecycle(tmp_path) -> None:
         assert duplicate["id"] == quote["id"]
         assert duplicate["duplicate"] is True
 
-        random_quote = await handler.get_random_quote(123)
+        random_quote = await handler.get_random_quote(123, channel_id=30)
         assert random_quote is not None
         assert random_quote["quote_text"] == "this belongs in the hall"
 
-        user_quote = await handler.get_random_quote(123, quoted_user_id=10)
+        user_quote = await handler.get_random_quote(123, channel_id=30, quoted_user_id=10)
         assert user_quote is not None
         assert user_quote["quoted_username"] == "Quoted User"
 
-        listed = await handler.list_quotes(123, limit=5)
+        listed = await handler.list_quotes(123, channel_id=30, limit=5)
         assert [row["id"] for row in listed] == [quote["id"]]
 
-        assert await handler.delete_quote(123, quote["id"]) is True
-        assert await handler.get_quote(123, quote["id"]) is None
+        assert await handler.list_quotes(123, channel_id=31) == []
+        assert await handler.get_random_quote(123, channel_id=31) is None
+
+        assert await handler.delete_quote(123, quote["id"], channel_id=30) is True
+        assert await handler.get_quote(123, quote["id"], channel_id=30) is None
         assert await handler.list_quotes(123) == []
 
     asyncio.run(run_test())

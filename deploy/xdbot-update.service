@@ -1,0 +1,12 @@
+[Unit]
+Description=Update xdBot from GitHub Container Registry
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/xdbot
+ExecStart=/usr/bin/docker compose pull
+ExecStart=/usr/bin/docker compose up -d --pull never --wait --wait-timeout 120
+TimeoutStartSec=10min

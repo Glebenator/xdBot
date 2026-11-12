@@ -1,6 +1,7 @@
 # cogs/stocks.py
 """Stock market data commands using Polygon.io API."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
@@ -741,7 +742,7 @@ class Stocks(commands.Cog):
         if indicators:
             indicator_list = [i.strip() for i in indicators.split(",")]
 
-        days = min(days, 365)  # Cap at 1 year
+        days = max(1, min(days, 365))
         from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         to_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -750,7 +751,8 @@ class Stocks(commands.Cog):
                 ticker,
                 timespan="day",
                 from_date=from_date,
-                to_date=to_date
+                to_date=to_date,
+                limit=days + 1,
             )
             results = data.get("results", [])
 
@@ -764,7 +766,8 @@ class Stocks(commands.Cog):
                 return
 
             # Generate chart
-            chart_buffer = ChartGenerator.create_price_chart(
+            chart_buffer = await asyncio.to_thread(
+                ChartGenerator.create_price_chart,
                 ticker=ticker,
                 data=results,
                 chart_type=chart_type.lower(),
@@ -835,7 +838,7 @@ class Stocks(commands.Cog):
         await defer_hybrid(ctx)
 
         # Parse tickers
-        ticker_list = [t.strip().upper() for t in tickers.split(",")]
+        ticker_list = list(dict.fromkeys(t.strip().upper() for t in tickers.split(",") if t.strip()))
         if len(ticker_list) > 5:
             embed = create_embed(
                 title="❌ Too Many Tickers",
@@ -845,7 +848,7 @@ class Stocks(commands.Cog):
             await send_hybrid_message(ctx, embed=embed)
             return
 
-        days = min(days, 365)
+        days = max(1, min(days, 365))
         from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         to_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -859,7 +862,8 @@ class Stocks(commands.Cog):
                     ticker,
                     timespan="day",
                     from_date=from_date,
-                    to_date=to_date
+                    to_date=to_date,
+                    limit=days + 1,
                 )
                 results = data.get("results", [])
 
@@ -879,7 +883,7 @@ class Stocks(commands.Cog):
                 return
 
             # Generate comparison chart
-            chart_buffer = ChartGenerator.create_comparison_chart(ticker_data)
+            chart_buffer = await asyncio.to_thread(ChartGenerator.create_comparison_chart, ticker_data)
 
             # Create embed with performance summary
             embed = create_embed(

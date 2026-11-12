@@ -1,4 +1,5 @@
 [tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 python_files = ["test_*.py"]
 addopts = "-q -m 'not integration'"
 markers = [
@@ -20,5 +21,4 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/*.py" = ["E402"]
 "test_*.py" = ["E402"]

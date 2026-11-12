@@ -19,7 +19,7 @@ class Fun(commands.Cog):
         self.random_org_enabled = config.settings.random_org_enabled
         if not self.random_org_enabled:
             logging.warning(
-                "RANDOM_ORG_KEY is not configured; falling back to local pseudo-random numbers."
+                "RANDOM_ORG_KEY is not set. Games use the local random number generator."
             )
         self.rng = RandomOrgRNG(config.settings.random_org_api_key)
 
@@ -33,7 +33,8 @@ class Fun(commands.Cog):
             raise commands.NoPrivateMessage("This command can only be used in a server context.")
         return ctx.guild.id
 
-    async def process_success_roll(self, number: int) -> tuple[str, int]:
+    @staticmethod
+    def process_success_roll(number: int) -> tuple[str, int]:
         """Process a success roll and return the message and success level"""
         if number < 5:
             return "📉 Massive anti-success " + str(number), 1
@@ -48,101 +49,45 @@ class Fun(commands.Cog):
         else:
             return "🌟 IS A MASSIVE SUCCESSFUL BUSINESSMAN " + str(number), 6
 
-    async def handle_success_roll(self, ctx, guild_id: int, interaction=None) -> tuple[str, int]:
-        """Handle the success roll logic"""
-        try:
-            number = await self.rng.randint(1, 100)
-            # Log the roll result
-            logging.info(f"Success roll for {ctx.author.name}#{ctx.author.discriminator} (ID: {ctx.author.id}): {number}")
+    async def _send_cooldown(self, ctx, next_roll: datetime) -> None:
+        minutes = max(0, int((next_roll - datetime.now()).total_seconds() / 60))
+        hours, minutes = divmod(minutes, 60)
+        await ctx.send(embed=create_embed(
+            title="Command on Cooldown",
+            description=f"You can roll again in {hours} hours and {minutes} minutes.",
+            color=discord.Color.red().value,
+        ))
 
-            message_part, success_level = await self.process_success_roll(number)
-
-            user = interaction.user if interaction else ctx.author
-            message = f"{user.mention} {message_part}"
-
-            # Update database
-            await self.db.log_command_usage(
-                guild_id,
-                user.id,
-                "успех",
-                success_level=success_level
-            )
-            await self.db.add_total_success(
-                guild_id,
-                user.id,
-                success_level
-            )
-
-            streak_info = await self.db.update_success_streak(
-                guild_id,
-                user.id
-            )
-
-            if streak_info['streak_continued']:
-                message += f"\n🔥 Streak continued! Current streak: {streak_info['current_streak']} days"
-            elif streak_info['streak_reset']:
-                message += "\n❌ Streak reset! Starting new streak!"
-
-            if not self.random_org_enabled:
-                message += "\nℹ️ True randomness unavailable; using fallback RNG until a Random.org key is configured."
-
-            return message, success_level
-        except Exception as e:
-            logging.error(f"Error processing success roll: {str(e)}")
-            raise
-
-    @commands.hybrid_command(name="успех", description="See how successful you are today using true randomness (once per 12h)")
+    @commands.hybrid_command(name="успех", description="Roll for success once every 12 hours")
+    @commands.guild_only()
     async def success(self, ctx):
-        """Check your daily success level"""
+        """Roll for success and update the server leaderboard."""
         await defer_hybrid(ctx)
-
         guild_id = self._require_guild(ctx)
-        user_id = ctx.author.id
-        current_time = datetime.now()
-
-        # Update user record
-        await self.db.update_user(guild_id, user_id, ctx.author.name)
-
-        # Check cooldown
-        last_used = await self.db.get_command_cooldown(
-            guild_id,
-            user_id,
-            "успех"
-        )
+        user = ctx.author
+        last_used = await self.db.get_command_cooldown(guild_id, user.id, "успех")
         if last_used:
-            next_available = last_used + timedelta(hours=12)
-            if current_time < next_available:
-                time_remaining = next_available - current_time
-                hours = int(time_remaining.total_seconds() // 3600)
-                minutes = int((time_remaining.total_seconds() % 3600) // 60)
-
-                embed = create_embed(
-                    title="Command on Cooldown ⏳",
-                    description=f"You can check your success again in {hours} hours and {minutes} minutes.",
-                    color=discord.Color.red().value
-                )
-                await ctx.send(embed=embed)
+            next_roll = last_used + timedelta(hours=12)
+            if datetime.now() < next_roll:
+                await self._send_cooldown(ctx, next_roll)
                 return
 
-        try:
-            # Record exact execution time
-            await self.db.record_command_execution(
-                guild_id,
-                user_id,
-                "успех"
-            )
+        number = await self.rng.randint(1, 100)
+        message, points = self.process_success_roll(number)
+        next_roll, streak, elapsed_days = await self.db.record_success_roll(
+            guild_id, user.id, user.name, number, points
+        )
+        if next_roll is not None:
+            await self._send_cooldown(ctx, next_roll)
+            return
 
-            message, success_level = await self.handle_success_roll(ctx, guild_id)
-
-            await self.db.update_command_cooldown(
-                guild_id,
-                user_id,
-                "успех"
-            )
-            await ctx.send(message)
-
-        except Exception:
-            await ctx.send("Error accessing Random.org. Please try again later.")
+        if elapsed_days == 1:
+            message += f"\nStreak continued. Current streak is {streak} days."
+        elif elapsed_days not in (None, 0):
+            message += "\nYour streak started again."
+        if not self.random_org_enabled:
+            message += "\nThis roll used the local random number generator."
+        await ctx.send(f"{user.mention} {message}")
 
     @commands.hybrid_command(
     name="топ",
@@ -295,7 +240,8 @@ class Fun(commands.Cog):
             await ctx.send(f"{mention} откушал {number}% огурчика 🥒")
 
     @commands.hybrid_command(name="roll", description="Roll a random number using Random.org")
-    async def roll(self, ctx, max_num: int = 100):
+    @commands.guild_only()
+    async def roll(self, ctx, max_num: commands.Range[int, 1, 1_000_000_000] = 100):
         """Roll a random number between 1 and max_num using true randomness from Random.org"""
         await defer_hybrid(ctx)  # Acknowledge command while we wait for Random.org
 

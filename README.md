@@ -1,133 +1,95 @@
 # xdBot
 
-A modular Discord bot built on discord.py: LLM chat with web search and tool calling, stock quotes,
-charts and indicators, music playback, a quote hall, auto-replies, word tracking, and a few games.
-Each feature is a cog in `cogs/`, and every command works both as a slash command and with the `!` prefix.
+xdBot is a Discord bot with games, music, stock data, Quote Hall, auto-replies, and word tracking. Use a slash command or the `!` prefix.
 
-## Features
+## Deploy on a Linux server
 
-| Area | What it does | Needs |
-|---|---|---|
-| LLM chat | `/chat` answers with a local Ollama model or an OpenRouter model, keeps per-user history, and can call tools: web search and live stock data. Mentioning the bot gets a shorter, more casual reply. | Ollama or OpenRouter |
-| Web search | A tool the chat model can call. SearXNG first, Tavily as the fallback. | SearXNG or Tavily |
-| Stocks | Quotes, company info, news, dividends, splits, market status, candlestick, line and area charts, comparisons, and RSI, SMA, EMA, MACD and golden-cross signals. | Polygon.io key |
-| Music | Plays YouTube audio in a voice channel with a queue, pause, skip and volume. | FFmpeg |
-| Quote hall | Saves messages as quotes and shows random, per-user and recent ones. | |
-| Auto-replies | Replies with text and reactions when a message contains a trigger phrase. | |
-| Word tracking | Counts tracked words per user, with stats and a leaderboard. | |
-| Image | `/deamonify` finds the eyes in an attached photo and makes them glow. | MediaPipe (installed) |
-| Games | A daily "success" roll from Random.org with streaks and a leaderboard, and `/roll`. | Random.org key (optional) |
+GitHub Actions tests each change. A push to `botv2` also builds the image and checks that the bot, FFmpeg, and Deno start in it. GitHub Container Registry (GHCR) stores the tested image at `ghcr.io/glebenator/xdbot` with the tags `latest` and `sha-<full-commit-sha>`. The Linux service checks for an updated image every five minutes.
 
-## Requirements
+### First release
 
-- Python 3.11. The pinned MediaPipe release has no wheels for newer Pythons.
-- FFmpeg on the `PATH`, for music.
-- A Discord application with a bot token. In the Developer Portal, turn on the **Message Content** and
-  **Server Members** privileged intents. Invite the bot with the `bot` and `applications.commands` scopes.
+1. Push the release to `botv2`. Wait for **CI and image release** to complete in GitHub Actions.
+2. Open the `xdbot` package settings in GitHub. Make the package public if the server must pull without credentials. For a private package, log in to GHCR on the server as root with a classic token that has `read:packages`. The systemd service uses root's Docker credentials.
+3. Make sure the server has Docker Engine and the Docker Compose plugin. The published image uses Linux x86-64. Run the commands below from a copy of this repository on the server.
 
-## Run it locally
-
-```bash
-git clone https://github.com/Glebenator/xdBot.git
-cd xdBot
-python3.11 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env               # then fill in DISCORD_TOKEN and any optional keys
-python main.py
+```sh
+sudo install -d -m 0755 /opt/xdbot
+sudo install -d -m 0750 -o 1000 -g 1000 /opt/xdbot/data
+sudo install -m 0644 docker-compose.yml /opt/xdbot/docker-compose.yml
+sudo install -m 0600 .env.example /opt/xdbot/.env
+sudoedit /opt/xdbot/.env
 ```
 
-The bot creates `data/bot.db` (SQLite) on first start and syncs its slash commands globally, which can
-take a few minutes to show up in Discord.
+Set `DISCORD_TOKEN` in `.env`. In the Discord Developer Portal, enable the **Message Content** and **Server Members** intents. Invite the bot with the `bot` and `applications.commands` scopes. Give it Connect and Speak permissions for music.
 
-## Run it with Docker
+For an upgrade, stop the old bot before you copy its data. Save a backup of its complete `data/` directory. Copy its contents into `/opt/xdbot/data/` and give UID and GID 1000 access to the files. Use the old bot's token. Keep the backup until you confirm that the points, quotes, and other data are present in the new bot. The bot imports the old reply and word files as defaults for each server. Edits are stored in SQLite for that server.
 
-```bash
-cp .env.example .env               # fill it in
-docker compose up -d --build
+4. Install the service and start it. It pulls the image before it replaces the container. Compose waits for the bot to connect to Discord.
+
+```sh
+sudo install -m 0644 deploy/xdbot-update.service deploy/xdbot-update.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start xdbot-update.service
+sudo systemctl enable --now xdbot-update.timer
 ```
 
-- Compose passes `.env` to the container as environment variables. The image never contains it.
-- Only `./data` is mounted, so the database, replies and word filter survive rebuilds.
-- The container runs as an unprivileged user with UID and GID 1000. If `./data` on the host belongs to
-  another user, build with `docker compose build --build-arg UID=$(id -u) --build-arg GID=$(id -g)`.
-- Inside the container, `localhost` is the container itself. For Ollama or SearXNG on the Docker host, use
-  `http://host.docker.internal:11434` and `http://host.docker.internal:8888`.
+5. Check the update log and the bot log.
 
-CI publishes an image to Docker Hub after the tests pass on the default branch.
+```sh
+sudo journalctl -u xdbot-update.service -n 50 --no-pager
+cd /opt/xdbot
+sudo docker compose ps
+sudo docker compose logs -f discord-bot
+```
 
-## Configuration
+If Docker is installed at a different path, update both `ExecStart` lines in the service before you install it. To change the update schedule, edit the timer. To use an earlier refresh release, set `XDBOT_IMAGE=ghcr.io/glebenator/xdbot:sha-<full-commit-sha>` in `/opt/xdbot/.env` and start the service again. Remove the setting to resume updates to `latest`. If you return to an older database format, stop the bot and restore the backup first.
 
-All settings are environment variables, read from `.env` by `config.py`. Only `DISCORD_TOKEN` is required.
+### Configuration
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `DISCORD_TOKEN` | | Bot token from the Developer Portal |
-| `BOT_PREFIX` | `!` | Prefix for text commands. Mentioning the bot also works as a prefix. |
-| `OWNER_IDS` | the application owner | Comma-separated user IDs allowed to run `!reload` and `!sync` |
-| `GUILD_ID` | | Read into the settings but not used yet |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama server |
-| `OLLAMA_CHAT_MODEL` | `qwen3:4b` | Model for `/chat`; it must support tool calling for search and stocks |
-| `OLLAMA_MENTION_MODEL` | the chat model | Model for replies to @mentions, such as a custom persona built from a Modelfile |
-| `OPENROUTER_API_KEY` | | Enables OpenRouter models |
-| `OPENROUTER_DEFAULT_MODEL` | | Registers an OpenRouter model that `/llm_set_model` can choose |
-| `OPENROUTER_BASE_URL`, `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | OpenRouter API, none, `xdBot` | Sent to OpenRouter with each request |
-| `SEARXNG_URL` | `http://localhost:8888` | SearXNG instance with the JSON format enabled |
-| `TAVILY_API_KEY` | | Search fallback when SearXNG is unavailable |
-| `POLYGON_API_KEY` | | Stock commands and the chat model's stock tools |
-| `RANDOM_ORG_KEY` | | True randomness for `/успех` and `/roll` |
-| `MUSIC_MAX_QUEUE_SIZE`, `MUSIC_IDLE_TIMEOUT`, `MUSIC_DEFAULT_VOLUME`, `MUSIC_MAX_DURATION` | `100`, `300` s, `0.5`, `3600` s | Music limits |
-| `LLM_LOG_LEVEL` | `INFO` | Log level for LLM and search calls |
+| Variable | Purpose |
+| --- | --- |
+| `DISCORD_TOKEN` | Required. Use the token for your Discord bot. |
+| `BOT_PREFIX` | Prefix for text commands. The default is `!`. |
+| `OWNER_IDS` | Optional. Comma-separated Discord user IDs for `reload` and `sync`. The application owner is the default. |
+| `RANDOM_ORG_KEY` | Optional. Enables Random.org for the games. The bot uses local randomness when the service is unavailable. |
+| `POLYGON_API_KEY` | Optional. Enables stock data from Massive. Existing Polygon API keys are valid. |
+| `MUSIC_MAX_QUEUE_SIZE` | The default is 100 tracks. |
+| `MUSIC_IDLE_TIMEOUT` | The default is 300 seconds. |
+| `MUSIC_DEFAULT_VOLUME` | The default is 0.5. Use a value from 0 to 1. |
+| `MUSIC_MAX_DURATION` | The default is 3,600 seconds. |
 
 ## Commands
 
-Every command is a slash command and a prefix command, except `!reload` and `!sync`.
-Commands marked **admin** need the Administrator permission, and **mod** needs Manage Messages.
+| Area | Commands |
+| --- | --- |
+| Games | `успех`, `успехстат`, `топ`, `roll`, `огурчик`, `увлажнение`, `logitech`, `razer` |
+| General | `help`, `ping` |
+| Music | `join`, `play`, `pause`, `resume`, `skip`, `stop`, `volume`, `leave` |
+| Quote Hall | `quote add`, `quote random`, `quote user`, `quote list`, `quote delete`. Use `!quote` or `/quote show` for a random quote. |
+| Auto-replies | `listreplies`, `addreply`, `addreaction`, `removereply` |
+| Word tracking | `addword`, `removeword`, `wordstats`, `wordleaderboard` |
+| Stock data | `stock`, `stockinfo`, `stocksearch`, `marketstatus`, `stocknews`, `stockdividends`, `stocksplits`, `stockchart`, `stockcompare`, `stockrsi`, `stocksma`, `stockema`, `stockmacd`, `goldencross` |
+| Points administration | `setpoints`, `addpoints`, `removepoints`, `setstreak`, `resetstats` |
+| Bot owner | `!reload <cog>`, `!sync` |
 
-**General:** `help`, `ping`
+`!успех` updates your points and streak once every 12 hours in each server. Music accepts recorded YouTube videos and search terms. Use the playback controls from the bot's voice channel. Saved Discord messages stay in their source channel or thread. Manual quotes are available across the server. Word statistics are sent privately to moderators.
 
-**LLM:** `chat`, `clear_chat`, `show_history`, `llm_current_model`, `llm_set_model` (admin), `model_stats` (admin)
+## Run checks
 
-**Stocks:** `stock` (also `stockquote`, `price`), `stockinfo`, `stocksearch`, `marketstatus`, `stocknews`,
-`stockdividends`, `stocksplits`, `stockchart ticker days chart_type`, `stockcompare`, `stockrsi`, `stocksma`,
-`stockema`, `stockmacd`, `goldencross`
+Install Python 3.11 and create a virtual environment. FFmpeg and Deno are needed for local music playback. The Docker image includes both.
 
-**Music:** `join`, `play`, `pause`, `resume`, `skip`, `stop`, `volume`, `leave` (also `disconnect`, `dc`)
-
-**Quote hall:** `quote`, `quote add`, `quote random`, `quote user`, `quote list`, `quote delete`
-
-**Auto-replies:** `listreplies`, `addreply` (mod), `addreaction` (mod), `removereply` (mod)
-
-**Word tracking:** `addword`, `removeword`, `wordstats`, `wordleaderboard` (all mod)
-
-**Games:** `успех`, `успехстат`, `топ`, `roll`, `огурчик`, `увлажнение`, `logitech`, `razer`
-
-**Image:** `deamonify` (attach a photo)
-
-**Points (admin):** `setpoints`, `addpoints`, `removepoints`, `setstreak`, `resetstats`
-
-**Owner:** `!reload <cog>`, `!sync`
-
-## How it fits together
-
-- `main.py` starts the bot, turns on the intents, and loads every module in `cogs/` that defines
-  `async def setup`.
-- `config.py` reads the environment once into a `Settings` object.
-- `utils/` holds the shared parts: the SQLite layer (`db_handler.py`), the LLM handler with Ollama and
-  OpenRouter providers and tool calling (`ollama_handler.py`), search (`search_tool.py`), the Polygon client,
-  charts and indicators, and the voice and queue handling for music.
-- `data/` holds runtime state: `bot.db`, `replies.json` and `bad_words.json`.
-
-## Development
-
-```bash
-pip install -r requirements.txt -r requirements-dev.txt
-make check        # compile, ruff, pytest
+```sh
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python main.py --check
+python -m ruff check .
+python -m pytest
 ```
 
-Tests that call external services are marked `integration` and are skipped by default;
-run them with `pytest -m integration`. CI runs the same checks on every push and pull request.
+`python main.py --check` loads the extensions with a temporary database and does not connect to Discord. The default test run skips tests that use external services. Run `python -m pytest -m integration` when you have the required services and credentials.
 
-Dependencies are pinned to versions that pass the suite. Raise them on purpose and run `make check`:
-a MediaPipe patch release once removed the face-mesh API that `cogs/image.py` uses. discord.py is
-installed with its `voice` extra, which brings PyNaCl and `davey`; without `davey`, voice and music are off.
+To run a local container build, create a local `.env` and run these commands.
+
+```sh
+docker build -t xdbot:dev .
+XDBOT_IMAGE=xdbot:dev docker compose up -d --pull never
+```

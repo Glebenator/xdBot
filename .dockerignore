@@ -1,19 +1,11 @@
-# Secrets and local state never go into the image. Pass settings with
-# --env-file or Compose instead.
-.env
-.env.*
-!.env.example
-data/bot.db
-data/bad_words.json
-
-# Development files
-.git
-.github
-.venv
-venv
-__pycache__
-*.pyc
-.pytest_cache
-.ruff_cache
-tests
-scripts
+**
+!Dockerfile
+!requirements.txt
+!main.py
+!config.py
+!cogs/
+!cogs/**/*.py
+!utils/
+!utils/**/*.py
+!data/
+!data/replies.json

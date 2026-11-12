@@ -1,13 +1,14 @@
-# cogs/replies.py
-import json
+"""Manage auto-replies for each server."""
+
 import logging
-import os
-from typing import Dict
+from pathlib import Path
 
 import discord
 from discord.ext import commands
 
-from utils.helpers import create_embed, defer_hybrid
+from utils.db_handler import get_database_handler
+from utils.guild_rules import GuildRules, read_rule_defaults
+from utils.helpers import defer_hybrid
 
 logger = logging.getLogger(__name__)
 
@@ -15,171 +16,97 @@ logger = logging.getLogger(__name__)
 class Replies(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Initialize with default replies in the new format
-        self.replies: Dict[str, dict] = {
-        }
-        self.load_replies()
-
-    def load_replies(self) -> None:
-        """Load custom replies from JSON file if it exists"""
-        try:
-            if os.path.exists('data/replies.json'):
-                with open('data/replies.json', 'r') as f:
-                    self.replies.update(json.load(f))
-                logger.info("Loaded %d reply triggers", len(self.replies))
-        except Exception:
-            logger.exception("Failed to load replies from data/replies.json")
-
-    def save_replies(self) -> None:
-        """Save custom replies to JSON file"""
-        try:
-            os.makedirs('data', exist_ok=True)
-            with open('data/replies.json', 'w') as f:
-                json.dump(self.replies, f, indent=4)
-        except Exception:
-            logger.exception("Failed to save replies to data/replies.json")
+        root = Path(__file__).resolve().parent.parent
+        bundled = root / "defaults" / "replies.json"
+        if not bundled.is_file():
+            bundled = root / "data" / "replies.json"
+        legacy = read_rule_defaults("replies.json", bundled) or {}
+        defaults = {trigger.casefold(): rule for trigger, rule in legacy.items() if trigger.strip()}
+        self.rules = GuildRules(get_database_handler(), "replies", defaults)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """Listen for messages and respond with text and/or reactions"""
-        if message.author == self.bot.user:
+        if message.author.bot:
             return
-
-        content = message.content.lower()
+        content = message.content.casefold()
         if content == "ah":
             await message.channel.send("Whatever")
             return
-
-        for trigger, reply_data in self.replies.items():
-            if trigger.lower() in content:
-                # Add reactions
-                if "reactions" in reply_data:
-                    for reaction in reply_data["reactions"]:
-                        try:
-                            await message.add_reaction(reaction)
-                        except discord.errors.HTTPException:
-                            continue  # Skip invalid emoji
-
-                # Send text response if it exists
-                if "response" in reply_data and reply_data["response"]:
-                    # Replace {user} with user mention
-                    response = reply_data["response"].replace("{user}", message.author.mention)
-                    await message.channel.send(response)
-                break
-
-    @commands.hybrid_command(name="addreply", description="Add a new auto-reply trigger with text and/or reactions")
-    @commands.has_permissions(manage_messages=True)
-    async def add_reply(self, ctx, trigger: str, response: str = None, reactions: str = None) -> None:
-        """
-        Add a new trigger word with response and/or reactions
-
-        Parameters:
-        -----------
-        trigger: str
-            The word or phrase that will trigger the response
-        response: str, optional
-            The text response to send (can be None if only using reactions)
-        reactions: str, optional
-            Comma-separated list of emoji reactions (e.g., "👍,❤️,😊")
-        """
-        await defer_hybrid(ctx)
-        reaction_list = []
-        if reactions:
-            reaction_list = [r.strip() for r in reactions.split(",")]
-
-        if not response and not reaction_list:
-            await ctx.send("You must provide either a response message or reactions!")
+        if message.guild is None or not content or (await self.bot.get_context(message)).valid:
+            return
+        for trigger, rule in (await self.rules.get(message.guild.id)).items():
+            if trigger not in content:
+                continue
+            for emoji in rule.get("reactions", []):
+                try:
+                    await message.add_reaction(emoji)
+                except discord.HTTPException:
+                    logger.debug("Could not add an auto-reply reaction", exc_info=True)
+            response = rule.get("response")
+            if response:
+                mentions = discord.AllowedMentions(
+                    everyone=False, roles=False, users=[message.author], replied_user=False
+                )
+                await message.channel.send(
+                    response.replace("{user}", message.author.mention)[:2000],
+                    allowed_mentions=mentions,
+                )
             return
 
-        self.replies[trigger.lower()] = {
-            "response": response,
-            "reactions": reaction_list
-        }
-        self.save_replies()
+    async def _set_reply(self, ctx, trigger, response, reactions):
+        await defer_hybrid(ctx)
+        trigger = trigger.strip().casefold()
+        response = (response or "").strip()
+        emoji = [item.strip() for item in (reactions or "").split(",") if item.strip()]
+        if not 1 <= len(trigger) <= 100:
+            await ctx.send("Enter a trigger with 1 to 100 characters.")
+            return
+        if len(response) > 1500 or len(emoji) > 10:
+            await ctx.send("Use up to 1,500 response characters and 10 reactions.")
+            return
+        if not (response or emoji):
+            await ctx.send("Enter a response or at least one reaction.")
+            return
+        await self.rules.set(ctx.guild.id, trigger, {"response": response, "reactions": emoji})
+        await ctx.send("Auto-reply saved.")
 
-        embed = create_embed(
-            title="New Auto-Reply Added",
-            description=f"Trigger: {trigger}\nResponse: {response}\nReactions: {' '.join(reaction_list)}",
-            color=discord.Color.green().value
-        )
-        await ctx.send(embed=embed)
+    @commands.hybrid_command(name="addreply", description="Save an auto-reply trigger")
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
+    async def add_reply(self, ctx, trigger: str, response: str | None = None, reactions: str | None = None):
+        await self._set_reply(ctx, trigger, response, reactions)
+
+    @commands.hybrid_command(name="addreaction", description="Save a reaction-only trigger")
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
+    async def add_reaction_only(self, ctx, trigger: str, reactions: str):
+        await self._set_reply(ctx, trigger, None, reactions)
 
     @commands.hybrid_command(name="removereply", description="Remove an auto-reply trigger")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
-    async def remove_reply(self, ctx, trigger: str) -> None:
-        """Remove a trigger word and its responses"""
+    async def remove_reply(self, ctx, trigger: str):
         await defer_hybrid(ctx)
-        trigger = trigger.lower()
-        if trigger in self.replies:
-            reply_data = self.replies.pop(trigger)
-            self.save_replies()
+        removed = await self.rules.set(ctx.guild.id, trigger.strip().casefold(), None)
+        await ctx.send("Auto-reply removed." if removed else "Trigger not found.")
 
-            embed = create_embed(
-                title="Auto-Reply Removed",
-                description=f"Trigger: {trigger}\nResponse: {reply_data.get('response', 'None')}\nReactions: {' '.join(reply_data.get('reactions', []))}",
-                color=discord.Color.red().value
-            )
-        else:
-            embed = create_embed(
-                title="Error",
-                description=f"Trigger '{trigger}' not found in replies",
-                color=discord.Color.red().value
-            )
-
-        await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name="addreaction", description="Add a reaction-only trigger")
-    @commands.has_permissions(manage_messages=True)
-    async def add_reaction_only(self, ctx, trigger: str, reactions: str) -> None:
-        """
-        Add a new trigger that only adds reactions, no text response
-
-        Parameters:
-        -----------
-        trigger: str
-            The word or phrase that will trigger the reactions
-        reactions: str
-            Comma-separated list of emoji reactions (e.g., "👍,❤️,😊")
-        """
+    @commands.hybrid_command(name="listreplies", description="List the auto-replies for this server")
+    @commands.guild_only()
+    async def list_replies(self, ctx):
         await defer_hybrid(ctx)
-        reaction_list = [r.strip() for r in reactions.split(",")]
-
-        if not reaction_list:
-            await ctx.send("You must provide at least one reaction!")
+        rules = await self.rules.get(ctx.guild.id)
+        if not rules:
+            await ctx.send("This server has no auto-replies.")
             return
+        items = list(rules.items())
+        for start in range(0, len(items), 4):
+            embed = discord.Embed(title="Auto-Replies", color=discord.Color.blue())
+            for trigger, rule in items[start:start + 4]:
+                response = rule.get("response") or "No text response"
+                emoji = " ".join(rule.get("reactions", []))
+                embed.add_field(name=trigger[:256], value=f"{response}\n{emoji}"[:1024], inline=False)
+            await ctx.send(embed=embed)
 
-        self.replies[trigger.lower()] = {
-            "response": None,
-            "reactions": reaction_list
-        }
-        self.save_replies()
 
-        embed = create_embed(
-            title="New Reaction Trigger Added",
-            description=f"Trigger: {trigger}\nReactions: {' '.join(reaction_list)}",
-            color=discord.Color.green().value
-        )
-        await ctx.send(embed=embed)
-
-    @commands.hybrid_command(name="listreplies", description="List all auto-reply triggers and responses")
-    async def list_replies(self, ctx) -> None:
-        """List all trigger words and their responses"""
-        await defer_hybrid(ctx)
-        embed = create_embed(
-            title="Auto-Replies List",
-            description="Here are all the current auto-replies:",
-            color=discord.Color.blue().value
-        )
-
-        for trigger, reply_data in self.replies.items():
-            value = f"Response: {reply_data.get('response', 'No text response')}\nReactions: {' '.join(reply_data.get('reactions', []))}"
-            embed.add_field(
-                name=trigger,
-                value=value,
-                inline=False
-            )
-
-        await ctx.send(embed=embed)
-
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Replies(bot))

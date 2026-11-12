@@ -45,7 +45,7 @@ class Admin(commands.Cog):
         description="[ADMIN] Set a user's success points"
     )
     @commands.has_permissions(administrator=True)
-    async def set_points(self, ctx, user: discord.Member, points: int):
+    async def set_points(self, ctx, user: discord.Member, points: commands.Range[int, 0, 1_000_000_000]):
         """Set a user's total success points"""
         await defer_hybrid(ctx)
         try:
@@ -60,7 +60,7 @@ class Admin(commands.Cog):
         description="[ADMIN] Add success points to a user"
     )
     @commands.has_permissions(administrator=True)
-    async def add_points(self, ctx, user: discord.Member, points: int):
+    async def add_points(self, ctx, user: discord.Member, points: commands.Range[int, 0, 1_000_000_000]):
         """Add success points to a user"""
         await defer_hybrid(ctx)
         try:
@@ -76,15 +76,14 @@ class Admin(commands.Cog):
         description="[ADMIN] Remove success points from a user"
     )
     @commands.has_permissions(administrator=True)
-    async def remove_points(self, ctx, user: discord.Member, points: int):
+    async def remove_points(self, ctx, user: discord.Member, points: commands.Range[int, 0, 1_000_000_000]):
         """Remove success points from a user"""
         await defer_hybrid(ctx)
         try:
             guild_id = self._require_guild(ctx)
-            current_points = await self.db.get_total_success(guild_id, user.id)
-            new_points = max(0, current_points - points)
-            await self.db.set_total_success(guild_id, user.id, user.display_name, new_points)
-            points_removed = current_points - new_points
+            points_removed, new_points = await self.db.remove_total_success(
+                guild_id, user.id, user.display_name, points
+            )
             await ctx.send(f"✅ Removed {points_removed} success points from {user.mention}. New total: {new_points}")
 
         except Exception as e:
@@ -96,7 +95,7 @@ class Admin(commands.Cog):
         description="[ADMIN] Set a user's success streak"
     )
     @commands.has_permissions(administrator=True)
-    async def set_streak(self, ctx, user: discord.Member, streak: int):
+    async def set_streak(self, ctx, user: discord.Member, streak: commands.Range[int, 0, 1_000_000]):
         """Set a user's success streak"""
         await defer_hybrid(ctx)
         try:

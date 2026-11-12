@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PolygonHandler:
     """Handler for Polygon.io API interactions."""
 
-    BASE_URL = "https://api.polygon.io"
+    BASE_URL = "https://api.massive.com"
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize the Polygon.io handler.
@@ -32,7 +32,7 @@ class PolygonHandler:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create an aiohttp session."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
         return self.session
 
     async def close(self):
@@ -63,24 +63,18 @@ class PolygonHandler:
 
         session = await self._get_session()
 
-        # Add API key to params
-        if params is None:
-            params = {}
-        params["apiKey"] = self.api_key
-
-        url = f"{self.BASE_URL}{endpoint}"
-
-        logger.debug(f"Making request to Polygon.io: {endpoint}")
-
-        async with session.get(url, params=params) as response:
+        async with session.get(
+            f"{self.BASE_URL}{endpoint}",
+            params=params,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            allow_redirects=False,
+        ) as response:
+            if 300 <= response.status < 400:
+                raise ValueError("Unexpected redirect from the stock data service.")
             response.raise_for_status()
             data = await response.json()
-
             if data.get("status") == "ERROR":
-                error_msg = data.get("error", "Unknown error")
-                logger.error(f"Polygon.io API error: {error_msg}")
-                raise ValueError(f"API Error: {error_msg}")
-
+                raise ValueError("The stock data service rejected the request.")
             return data
 
     async def get_ticker_details(self, ticker: str) -> Dict[str, Any]:
@@ -149,7 +143,7 @@ class PolygonHandler:
             to_date = datetime.now().strftime("%Y-%m-%d")
 
         endpoint = f"/v2/aggs/ticker/{ticker.upper()}/range/{multiplier}/{timespan}/{from_date}/{to_date}"
-        return await self._make_request(endpoint, params={"adjusted": "true", "limit": limit})
+        return await self._make_request(endpoint, params={"adjusted": "true", "limit": limit, "sort": "asc"})
 
     async def get_daily_open_close(
         self,

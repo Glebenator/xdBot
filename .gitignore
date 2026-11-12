@@ -1,10 +1,13 @@
 bot_test.py
 .env
+.env.*
+!.env.example
 __pycache__/
 utils/systempromt.py
 GEMINI.md
 data/bad_words.json
 data/bot.db
+data/bot.db-*
 .venv/
 .pytest_cache/
 .ruff_cache/

@@ -25,38 +25,15 @@ async def send_hybrid_message(
     ephemeral: bool = False,
     **kwargs
 ):
-    """Send a message that supports both prefix and slash contexts.
-
-    When ephemeral is requested, the message will be ephemeral only if the
-    current context originated from an interaction; otherwise it falls back
-    to a regular channel message.
-    """
-    kwargs = dict(kwargs)
-    kwargs.pop("ephemeral", None)
-
-    interaction = getattr(ctx, "interaction", None)
-
-    if ephemeral and interaction:
-        if interaction.response.is_done():
-            return await interaction.followup.send(
-                content=content,
-                embed=embed,
-                ephemeral=True,
-                **kwargs
-            )
-        await interaction.response.send_message(
-            content=content,
-            embed=embed,
-            ephemeral=True,
-            **kwargs
-        )
-        return None
-
-    return await ctx.send(
-        content=content,
-        embed=embed,
-        **kwargs
-    )
+    """Send a private response by interaction or direct message."""
+    if not ephemeral:
+        return await ctx.send(content=content, embed=embed, **kwargs)
+    if ctx.interaction is not None:
+        return await ctx.send(content=content, embed=embed, ephemeral=True, **kwargs)
+    try:
+        return await ctx.author.send(content=content, embed=embed, **kwargs)
+    except discord.Forbidden:
+        return await ctx.send("Enable direct messages or use the slash command.")
 
 
 async def defer_hybrid(ctx, *, ephemeral: bool = False) -> bool:

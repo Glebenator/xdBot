@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import logging
-import os
 import sqlite3
-from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
+from collections import Counter
+from contextlib import asynccontextmanager, closing
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import aiosqlite
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +20,7 @@ class DatabaseHandler:
     """Asynchronous database helper built on top of aiosqlite."""
 
     def __init__(self, db_path: str = "data/bot.db") -> None:
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.db_path = db_path
         self.init_database()
 
@@ -25,26 +29,25 @@ class DatabaseHandler:
     # ------------------------------------------------------------------
     def init_database(self) -> None:
         logger.info("Initialising database", extra={"db_path": self.db_path})
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("PRAGMA legacy_alter_table = ON")
+            cursor.execute("BEGIN IMMEDIATE")
 
+            self._recover_interrupted_migration(cursor)
             self._ensure_users_table(cursor)
             self._ensure_command_usage_table(cursor)
             self._ensure_command_cooldowns_table(cursor)
             self._ensure_word_usage_table(cursor)
             self._ensure_word_stats_table(cursor)
-            self._ensure_prompts_table(cursor)
             self._ensure_command_executions_table(cursor)
-            self._ensure_llm_settings_table(cursor)
             self._ensure_music_history_table(cursor)
             self._ensure_quotes_table(cursor)
+            self._ensure_rule_sets_table(cursor)
             self._ensure_indexes(cursor)
-
-            cursor.execute("PRAGMA foreign_keys = ON")
-            conn.commit()
 
     def _table_exists(self, cursor: sqlite3.Cursor, table: str) -> bool:
         cursor.execute(
@@ -56,6 +59,19 @@ class DatabaseHandler:
     def _table_has_column(self, cursor: sqlite3.Cursor, table: str, column: str) -> bool:
         cursor.execute(f"PRAGMA table_info({table})")
         return any(row[1] == column for row in cursor.fetchall())
+
+    def _recover_interrupted_migration(self, cursor: sqlite3.Cursor) -> None:
+        tables = ("users", "command_usage", "command_cooldowns", "word_usage", "word_stats", "command_executions")
+        for table in tables:
+            legacy = f"{table}_legacy"
+            if not self._table_exists(cursor, legacy):
+                continue
+            if self._table_exists(cursor, table):
+                if cursor.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+                    raise RuntimeError(f"Both {table} and {legacy} contain data. Restore or merge a database backup.")
+                cursor.execute(f"DROP TABLE {table}")
+            cursor.execute(f"ALTER TABLE {legacy} RENAME TO {table}")
+            logger.info("Recovered an interrupted migration of %s", table)
 
     def _migrate_table(
         self,
@@ -259,42 +275,6 @@ class DatabaseHandler:
             },
         )
 
-    def _ensure_prompts_table(self, cursor: sqlite3.Cursor) -> None:
-        schema = (
-            """
-            CREATE TABLE IF NOT EXISTS prompts (
-                guild_id INTEGER,
-                model_name TEXT NOT NULL,
-                system_prompt TEXT NOT NULL,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_by_user_id INTEGER,
-                updated_by_guild_id INTEGER,
-                PRIMARY KEY (guild_id, model_name)
-            )
-            """
-        )
-
-        if not self._table_exists(cursor, "prompts"):
-            cursor.execute(schema)
-            return
-
-        if self._table_has_column(cursor, "prompts", "guild_id"):
-            return
-
-        self._migrate_table(
-            cursor,
-            "prompts",
-            schema,
-            {
-                "guild_id": "NULL",
-                "model_name": "model_name",
-                "system_prompt": "system_prompt",
-                "last_updated": "last_updated",
-                "updated_by_user_id": "updated_by",
-                "updated_by_guild_id": "NULL",
-            },
-        )
-
     def _ensure_command_executions_table(self, cursor: sqlite3.Cursor) -> None:
         schema = (
             """
@@ -326,18 +306,6 @@ class DatabaseHandler:
                 "command_name": "command_name",
                 "execution_time": "execution_time",
             },
-        )
-
-    def _ensure_llm_settings_table(self, cursor: sqlite3.Cursor) -> None:
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS llm_settings (
-                guild_id INTEGER PRIMARY KEY,
-                model_key TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_by_user_id INTEGER
-            )
-            """
         )
 
     def _ensure_music_history_table(self, cursor: sqlite3.Cursor) -> None:
@@ -374,6 +342,16 @@ class DatabaseHandler:
             """
         )
 
+    def _ensure_rule_sets_table(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS guild_rule_sets (
+                guild_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                rules_json TEXT NOT NULL,
+                PRIMARY KEY (guild_id, kind)
+            )
+        """)
+
     def _ensure_indexes(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_command_usage_guild_user ON command_usage (guild_id, user_id)"
@@ -399,9 +377,23 @@ class DatabaseHandler:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_quotes_guild_user_active ON quotes (guild_id, quoted_user_id, deleted_at)"
         )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_quotes_message_active ON quotes (guild_id, message_id, deleted_at)"
-        )
+        if not cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'uq_quotes_message_active' AND type = 'index'"
+        ).fetchone():
+            cursor.execute("""
+                UPDATE quotes SET deleted_at = CURRENT_TIMESTAMP
+                WHERE message_id IS NOT NULL AND deleted_at IS NULL
+                  AND id NOT IN (
+                      SELECT MIN(id) FROM quotes
+                      WHERE message_id IS NOT NULL AND deleted_at IS NULL
+                      GROUP BY guild_id, message_id
+                  )
+            """)
+            cursor.execute("""
+                CREATE UNIQUE INDEX uq_quotes_message_active ON quotes (guild_id, message_id)
+                WHERE message_id IS NOT NULL AND deleted_at IS NULL
+            """)
+            cursor.execute("DROP INDEX IF EXISTS idx_quotes_message_active")
 
     # ------------------------------------------------------------------
     # Connection helper
@@ -417,128 +409,24 @@ class DatabaseHandler:
             await conn.close()
             logger.debug("Closed database connection", extra={"db_path": self.db_path})
 
-    # ------------------------------------------------------------------
-    # Prompt management
-    # ------------------------------------------------------------------
-    async def get_prompt(self, model_name: str, guild_id: Optional[int] = None) -> Optional[str]:
+    async def get_rule_set(self, guild_id: int, kind: str) -> dict[str, Any] | None:
         async with self._connect() as conn:
-            if guild_id is not None:
-                async with conn.execute(
-                    """
-                    SELECT system_prompt
-                    FROM prompts
-                    WHERE guild_id = ? AND model_name = ?
-                    """,
-                    (guild_id, model_name),
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    if row:
-                        return row["system_prompt"]
-
             async with conn.execute(
-                """
-                SELECT system_prompt
-                FROM prompts
-                WHERE guild_id IS NULL AND model_name = ?
-                """,
-                (model_name,),
+                "SELECT rules_json FROM guild_rule_sets WHERE guild_id = ? AND kind = ?",
+                (guild_id, kind),
             ) as cursor:
                 row = await cursor.fetchone()
-                return row["system_prompt"] if row else None
+                return json.loads(row["rules_json"]) if row else None
 
-    async def set_prompt(
-        self,
-        model_name: str,
-        system_prompt: str,
-        *,
-        guild_id: Optional[int] = None,
-        updated_by_user_id: Optional[int] = None,
-        updated_by_guild_id: Optional[int] = None,
-    ) -> None:
+    async def save_rule_set(self, guild_id: int, kind: str, rules: dict[str, Any]) -> None:
         async with self._connect() as conn:
-            if guild_id is None:
-                cursor = await conn.execute(
-                    """
-                    UPDATE prompts
-                    SET system_prompt = ?,
-                        last_updated = CURRENT_TIMESTAMP,
-                        updated_by_user_id = ?,
-                        updated_by_guild_id = ?
-                    WHERE guild_id IS NULL AND model_name = ?
-                    """,
-                    (system_prompt, updated_by_user_id, updated_by_guild_id, model_name),
-                )
-                if cursor.rowcount == 0:
-                    await conn.execute(
-                        """
-                        INSERT INTO prompts (
-                            guild_id,
-                            model_name,
-                            system_prompt,
-                            last_updated,
-                            updated_by_user_id,
-                            updated_by_guild_id
-                        )
-                        VALUES (NULL, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-                        """,
-                        (model_name, system_prompt, updated_by_user_id, updated_by_guild_id),
-                    )
-                await conn.commit()
-                return
-
-            await conn.execute(
-                """
-                INSERT INTO prompts (guild_id, model_name, system_prompt, last_updated, updated_by_user_id, updated_by_guild_id)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-                ON CONFLICT(guild_id, model_name) DO UPDATE SET
-                    system_prompt = excluded.system_prompt,
-                    last_updated = CURRENT_TIMESTAMP,
-                    updated_by_user_id = excluded.updated_by_user_id,
-                    updated_by_guild_id = excluded.updated_by_guild_id
-                """,
-                (guild_id, model_name, system_prompt, updated_by_user_id, updated_by_guild_id),
-            )
+            await conn.execute("""
+                INSERT INTO guild_rule_sets (guild_id, kind, rules_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id, kind) DO UPDATE SET rules_json = excluded.rules_json
+            """, (guild_id, kind, json.dumps(rules)))
             await conn.commit()
 
-    async def get_prompt_history(
-        self, model_name: str, guild_id: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        async with self._connect() as conn:
-            params: Sequence[Any]
-            if guild_id is not None:
-                query = (
-                    """
-                    SELECT p.*, u.username AS updated_by_name
-                    FROM prompts p
-                    LEFT JOIN users u
-                        ON p.updated_by_guild_id = u.guild_id
-                        AND p.updated_by_user_id = u.user_id
-                    WHERE p.model_name = ? AND p.guild_id = ?
-                    ORDER BY p.last_updated DESC
-                    """
-                )
-                params = (model_name, guild_id)
-            else:
-                query = (
-                    """
-                    SELECT p.*, u.username AS updated_by_name
-                    FROM prompts p
-                    LEFT JOIN users u
-                        ON p.updated_by_guild_id = u.guild_id
-                        AND p.updated_by_user_id = u.user_id
-                    WHERE p.model_name = ? AND p.guild_id IS NULL
-                    ORDER BY p.last_updated DESC
-                    """
-                )
-                params = (model_name,)
-
-            async with conn.execute(query, params) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-
-    # ------------------------------------------------------------------
-    # User & success tracking
-    # ------------------------------------------------------------------
     async def update_user(self, guild_id: int, user_id: int, username: str) -> None:
         async with self._connect() as conn:
             await conn.execute(
@@ -565,6 +453,29 @@ class DatabaseHandler:
                 (amount, guild_id, user_id),
             )
             await conn.commit()
+
+    async def remove_total_success(
+        self, guild_id: int, user_id: int, username: str, amount: int
+    ) -> tuple[int, int]:
+        async with self._connect() as conn:
+            await conn.execute("BEGIN IMMEDIATE")
+            async with conn.execute(
+                "SELECT total_success FROM users WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+            previous = int(row["total_success"] or 0) if row else 0
+            total = max(0, previous - amount)
+            await conn.execute("""
+                INSERT INTO users (guild_id, user_id, username, total_success)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    username = excluded.username,
+                    total_success = excluded.total_success,
+                    last_active = CURRENT_TIMESTAMP
+            """, (guild_id, user_id, username, total))
+            await conn.commit()
+            return max(0, previous - total), total
 
     async def set_total_success(
         self, guild_id: int, user_id: int, username: str, total: int
@@ -668,22 +579,6 @@ class DatabaseHandler:
             )
             await conn.commit()
 
-    async def update_command_cooldown(
-        self, guild_id: int, user_id: int, command_name: str
-    ) -> None:
-        timestamp = datetime.now().isoformat()
-        async with self._connect() as conn:
-            await conn.execute(
-                """
-                INSERT INTO command_cooldowns (guild_id, user_id, command_name, last_used)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(guild_id, user_id, command_name) DO UPDATE SET
-                    last_used = excluded.last_used
-                """,
-                (guild_id, user_id, command_name, timestamp),
-            )
-            await conn.commit()
-
     async def get_command_cooldown(
         self, guild_id: int, user_id: int, command_name: str
     ) -> Optional[datetime]:
@@ -701,57 +596,70 @@ class DatabaseHandler:
                     return datetime.fromisoformat(row["last_used"])
                 return None
 
-    async def update_success_streak(
-        self, guild_id: int, user_id: int
-    ) -> Dict[str, Any]:
+    async def record_success_roll(
+        self,
+        guild_id: int,
+        user_id: int,
+        username: str,
+        roll: int,
+        points: int,
+    ) -> tuple[datetime | None, int, int | None]:
+        """Return the next roll time or the new streak and elapsed days."""
         async with self._connect() as conn:
-            async with conn.execute(
-                """
-                SELECT success_streak, last_success_check
-                FROM users
+            await conn.execute("BEGIN IMMEDIATE")
+            now = datetime.now()
+            key = (guild_id, user_id)
+            async with conn.execute("""
+                SELECT last_used FROM command_cooldowns
+                WHERE guild_id = ? AND user_id = ? AND command_name = 'успех'
+            """, key) as cursor:
+                cooldown = await cursor.fetchone()
+            if cooldown and cooldown["last_used"]:
+                next_roll = datetime.fromisoformat(cooldown["last_used"]) + timedelta(hours=12)
+                if now < next_roll:
+                    return next_roll, 0, None
+
+            async with conn.execute("""
+                SELECT success_streak, last_success_check FROM users
                 WHERE guild_id = ? AND user_id = ?
-                """,
-                (guild_id, user_id),
-            ) as cursor:
-                row = await cursor.fetchone()
+            """, key) as cursor:
+                previous = await cursor.fetchone()
+            streak = 1
+            elapsed_days = None
+            if previous and previous["last_success_check"]:
+                previous_date = datetime.fromisoformat(previous["last_success_check"]).date()
+                elapsed_days = (now.date() - previous_date).days
+                if elapsed_days in (0, 1):
+                    streak = int(previous["success_streak"] or 0) + elapsed_days
 
-            current_time = datetime.now()
-            streak_info = {
-                "streak_continued": False,
-                "streak_reset": False,
-                "current_streak": 0,
-            }
-
-            if row and row["last_success_check"]:
-                last_check = datetime.fromisoformat(row["last_success_check"])
-                current_streak = int(row["success_streak"] or 0)
-                delta_days = (current_time.date() - last_check.date()).days
-
-                if delta_days == 1:
-                    current_streak += 1
-                    streak_info["streak_continued"] = True
-                elif delta_days == 0:
-                    pass
-                else:
-                    current_streak = 1
-                    streak_info["streak_reset"] = True
-            else:
-                current_streak = 1
-
-            await conn.execute(
-                """
-                UPDATE users
-                SET success_streak = ?,
-                    last_success_check = ?,
+            timestamp = now.isoformat()
+            await conn.execute("""
+                INSERT INTO users (
+                    guild_id, user_id, username, total_success, success_streak, last_success_check
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    username = excluded.username,
+                    total_success = COALESCE(users.total_success, 0) + excluded.total_success,
+                    success_streak = excluded.success_streak,
+                    last_success_check = excluded.last_success_check,
                     last_active = CURRENT_TIMESTAMP
-                WHERE guild_id = ? AND user_id = ?
-                """,
-                (current_streak, current_time.isoformat(), guild_id, user_id),
-            )
+            """, (*key, username, points, streak, timestamp))
+            await conn.execute("""
+                INSERT INTO command_usage (guild_id, user_id, command_name, success_level, roll_value)
+                VALUES (?, ?, 'успех', ?, ?)
+            """, (*key, points, roll))
+            await conn.execute("""
+                INSERT INTO command_cooldowns (guild_id, user_id, command_name, last_used)
+                VALUES (?, ?, 'успех', ?)
+                ON CONFLICT(guild_id, user_id, command_name) DO UPDATE SET last_used = excluded.last_used
+            """, (*key, timestamp))
+            await conn.execute("""
+                INSERT INTO command_executions (guild_id, user_id, command_name, execution_time)
+                VALUES (?, ?, 'успех', ?)
+                ON CONFLICT(guild_id, user_id, command_name) DO UPDATE SET execution_time = excluded.execution_time
+            """, (*key, timestamp))
             await conn.commit()
-
-            streak_info["current_streak"] = current_streak
-            return streak_info
+            return None, streak, elapsed_days
 
     async def get_success_stats(self, guild_id: int, user_id: int) -> Dict[str, Any]:
         async with self._connect() as conn:
@@ -833,28 +741,28 @@ class DatabaseHandler:
         self,
         guild_id: int,
         user_id: int,
-        word: str,
-        message_id: Optional[int] = None,
-        channel_id: Optional[int] = None,
+        username: str,
+        words: list[str],
+        message_id: int,
+        channel_id: int,
     ) -> None:
         async with self._connect() as conn:
-            await conn.execute(
-                """
+            await conn.execute("""
+                INSERT INTO users (guild_id, user_id, username)
+                VALUES (?, ?, ?)
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET username = excluded.username
+            """, (guild_id, user_id, username))
+            await conn.executemany("""
                 INSERT INTO word_usage (guild_id, user_id, word, message_id, channel_id)
                 VALUES (?, ?, ?, ?, ?)
-                """,
-                (guild_id, user_id, word, message_id, channel_id),
-            )
-            await conn.execute(
-                """
+            """, [(guild_id, user_id, word, message_id, channel_id) for word in words])
+            await conn.executemany("""
                 INSERT INTO word_stats (guild_id, user_id, word, usage_count, last_used)
-                VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(guild_id, user_id, word) DO UPDATE SET
-                    usage_count = usage_count + 1,
+                    usage_count = usage_count + excluded.usage_count,
                     last_used = CURRENT_TIMESTAMP
-                """,
-                (guild_id, user_id, word),
-            )
+            """, [(guild_id, user_id, word, count) for word, count in Counter(words).items()])
             await conn.commit()
 
     async def get_user_word_stats(
@@ -920,23 +828,6 @@ class DatabaseHandler:
     # ------------------------------------------------------------------
     # Command execution timestamps
     # ------------------------------------------------------------------
-    async def record_command_execution(
-        self, guild_id: int, user_id: int, command_name: str
-    ) -> datetime:
-        current_time = datetime.now()
-        async with self._connect() as conn:
-            await conn.execute(
-                """
-                INSERT INTO command_executions (guild_id, user_id, command_name, execution_time)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(guild_id, user_id, command_name) DO UPDATE SET
-                    execution_time = excluded.execution_time
-                """,
-                (guild_id, user_id, command_name, current_time.isoformat()),
-            )
-            await conn.commit()
-        return current_time
-
     async def get_command_execution_time(
         self, guild_id: int, user_id: int, command_name: str
     ) -> Optional[datetime]:
@@ -956,43 +847,6 @@ class DatabaseHandler:
 
     # ------------------------------------------------------------------
     # LLM settings helpers
-    # ------------------------------------------------------------------
-    async def set_llm_active_model(
-        self,
-        guild_id: int,
-        model_key: str,
-        *,
-        updated_by_user_id: Optional[int] = None,
-    ) -> None:
-        async with self._connect() as conn:
-            await conn.execute(
-                """
-                INSERT INTO llm_settings (guild_id, model_key, updated_at, updated_by_user_id)
-                VALUES (?, ?, CURRENT_TIMESTAMP, ?)
-                ON CONFLICT(guild_id) DO UPDATE SET
-                    model_key = excluded.model_key,
-                    updated_at = excluded.updated_at,
-                    updated_by_user_id = excluded.updated_by_user_id
-                """,
-                (guild_id, model_key, updated_by_user_id),
-            )
-            await conn.commit()
-
-    async def get_llm_settings(self, guild_id: int) -> Optional[Dict[str, Any]]:
-        async with self._connect() as conn:
-            async with conn.execute(
-                """
-                SELECT model_key, updated_at, updated_by_user_id
-                FROM llm_settings
-                WHERE guild_id = ?
-                """,
-                (guild_id,),
-            ) as cursor:
-                row = await cursor.fetchone()
-                return dict(row) if row else None
-
-    # ------------------------------------------------------------------
-    # Music history
     # ------------------------------------------------------------------
     async def log_music_play(
         self,
@@ -1103,6 +957,7 @@ class DatabaseHandler:
         """
         async with self._connect() as conn:
             if message_id is not None:
+                await conn.execute("BEGIN IMMEDIATE")
                 async with conn.execute(
                     """
                     SELECT *
@@ -1161,7 +1016,7 @@ class DatabaseHandler:
                 quote["duplicate"] = False
                 return quote
 
-    async def get_quote(self, guild_id: int, quote_id: int) -> Optional[Dict[str, Any]]:
+    async def get_quote(self, guild_id: int, quote_id: int, *, channel_id: int | None = None) -> Optional[Dict[str, Any]]:
         async with self._connect() as conn:
             async with conn.execute(
                 """
@@ -1169,9 +1024,10 @@ class DatabaseHandler:
                 FROM quotes
                 WHERE guild_id = ?
                     AND id = ?
+                    AND (channel_id IS NULL OR channel_id = ?)
                     AND deleted_at IS NULL
                 """,
-                (guild_id, quote_id),
+                (guild_id, quote_id, channel_id),
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
@@ -1180,33 +1036,18 @@ class DatabaseHandler:
         self,
         guild_id: int,
         *,
+        channel_id: int | None = None,
         quoted_user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         async with self._connect() as conn:
-            params: Sequence[Any]
-            if quoted_user_id is None:
-                query = """
-                    SELECT *
-                    FROM quotes
-                    WHERE guild_id = ?
-                        AND deleted_at IS NULL
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                """
-                params = (guild_id,)
-            else:
-                query = """
-                    SELECT *
-                    FROM quotes
-                    WHERE guild_id = ?
-                        AND quoted_user_id = ?
-                        AND deleted_at IS NULL
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                """
-                params = (guild_id, quoted_user_id)
-
-            async with conn.execute(query, params) as cursor:
+            async with conn.execute("""
+                SELECT * FROM quotes
+                WHERE guild_id = ? AND deleted_at IS NULL
+                  AND (channel_id IS NULL OR channel_id = ?)
+                  AND (? IS NULL OR quoted_user_id = ?)
+                ORDER BY RANDOM()
+                LIMIT 1
+            """, (guild_id, channel_id, quoted_user_id, quoted_user_id)) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
@@ -1214,53 +1055,31 @@ class DatabaseHandler:
         self,
         guild_id: int,
         *,
+        channel_id: int | None = None,
         quoted_user_id: Optional[int] = None,
         limit: int = 10,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         limit = max(1, min(limit, 25))
         offset = max(0, offset)
-
         async with self._connect() as conn:
-            params: Sequence[Any]
-            if quoted_user_id is None:
-                query = """
-                    SELECT *
-                    FROM quotes
-                    WHERE guild_id = ?
-                        AND deleted_at IS NULL
-                    ORDER BY id DESC
-                    LIMIT ? OFFSET ?
-                """
-                params = (guild_id, limit, offset)
-            else:
-                query = """
-                    SELECT *
-                    FROM quotes
-                    WHERE guild_id = ?
-                        AND quoted_user_id = ?
-                        AND deleted_at IS NULL
-                    ORDER BY id DESC
-                    LIMIT ? OFFSET ?
-                """
-                params = (guild_id, quoted_user_id, limit, offset)
+            async with conn.execute("""
+                SELECT * FROM quotes
+                WHERE guild_id = ? AND deleted_at IS NULL
+                  AND (channel_id IS NULL OR channel_id = ?)
+                  AND (? IS NULL OR quoted_user_id = ?)
+                ORDER BY id DESC
+                LIMIT ? OFFSET ?
+            """, (guild_id, channel_id, quoted_user_id, quoted_user_id, limit, offset)) as cursor:
+                return [dict(row) for row in await cursor.fetchall()]
 
-            async with conn.execute(query, params) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-
-    async def delete_quote(self, guild_id: int, quote_id: int) -> bool:
+    async def delete_quote(self, guild_id: int, quote_id: int, *, channel_id: int | None = None) -> bool:
         async with self._connect() as conn:
-            cursor = await conn.execute(
-                """
-                UPDATE quotes
-                SET deleted_at = CURRENT_TIMESTAMP
-                WHERE guild_id = ?
-                    AND id = ?
-                    AND deleted_at IS NULL
-                """,
-                (guild_id, quote_id),
-            )
+            cursor = await conn.execute("""
+                UPDATE quotes SET deleted_at = CURRENT_TIMESTAMP
+                WHERE guild_id = ? AND id = ? AND deleted_at IS NULL
+                  AND (channel_id IS NULL OR channel_id = ?)
+            """, (guild_id, quote_id, channel_id))
             await conn.commit()
             return cursor.rowcount > 0
 
@@ -1272,5 +1091,5 @@ def get_database_handler() -> DatabaseHandler:
     """Return a lazily initialised shared database handler."""
     global _shared_db_handler
     if _shared_db_handler is None:
-        _shared_db_handler = DatabaseHandler()
+        _shared_db_handler = DatabaseHandler(str(settings.data_dir / "bot.db"))
     return _shared_db_handler

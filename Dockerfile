@@ -1,42 +1,36 @@
-# Build stage: install the Python dependencies into a virtual environment.
-# gcc is only here, for any dependency without a prebuilt wheel.
+FROM denoland/deno:bin-2.9.5 AS deno
 FROM python:3.11-slim AS build
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc && \
-    rm -rf /var/lib/apt/lists/*
-
 RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Runtime stage: the virtual environment, the bot, and the system libraries it
-# needs (FFmpeg for music, libGL and GLib for OpenCV and MediaPipe).
 FROM python:3.11-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends ca-certificates ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 
-# Run as an unprivileged user. The IDs match the usual first user on a Linux
-# host, so a bind-mounted ./data stays writable; override them with build args.
-ARG UID=1000
-ARG GID=1000
-RUN groupadd --gid "$GID" bot && useradd --uid "$UID" --gid bot --no-create-home bot
+RUN groupadd --gid 1000 bot && \
+    useradd --uid 1000 --gid bot --no-create-home bot && \
+    install -d -o bot -g bot /app/data
 
 COPY --from=build /opt/venv /opt/venv
+COPY --from=deno /deno /usr/local/bin/deno
 ENV PATH="/opt/venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DENO_DIR=/tmp/deno \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    XDBOT_READY_FILE=/tmp/xdbot-ready
+
+LABEL org.opencontainers.image.source="https://github.com/Glebenator/xdBot"
 
 WORKDIR /app
-COPY . .
-# The bot writes its database, replies and word filter to data/.
-RUN mkdir -p data && chown -R bot:bot data
+COPY main.py config.py ./
+COPY cogs/ cogs/
+COPY utils/ utils/
+COPY data/replies.json defaults/replies.json
 
 USER bot
 CMD ["python", "main.py"]

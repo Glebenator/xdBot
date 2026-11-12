@@ -1,4 +1,5 @@
 # cogs/moderation.py
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -6,15 +7,18 @@ import discord
 from discord.ext import commands
 
 from utils.db_handler import get_database_handler
+from utils.guild_rules import GuildRules, read_rule_defaults
 from utils.helpers import create_embed, defer_hybrid, send_hybrid_message
-from utils.word_filter import WordFilter
+
+WORD = re.compile(r"[\w]+(?:['-][\w]+)*")
 
 
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = get_database_handler()
-        self.word_filter = WordFilter()
+        defaults = read_rule_defaults("bad_words.json") or []
+        self.rules = GuildRules(self.db, "words", {word.casefold(): True for word in defaults})
 
     @staticmethod
     def _require_guild(ctx) -> int:
@@ -31,78 +35,62 @@ class Moderation(commands.Cog):
         if message.guild is None:
             return
 
-        # Check message for tracked words
-        found_words = self.word_filter.check_message(message.content)
+        words = WORD.findall(message.content.casefold())
+        if not words or (await self.bot.get_context(message)).valid:
+            return
+        tracked = await self.rules.get(message.guild.id)
+        matches = [word for word in words if word in tracked]
+        if matches:
+            await self.db.log_word_usage(
+                message.guild.id,
+                message.author.id,
+                message.author.display_name,
+                matches,
+                message.id,
+                message.channel.id,
+            )
 
-        if found_words:
-            # Update database for each found word
-            for word in found_words:
-                await self.db.log_word_usage(
-                    message.guild.id,
-                    message.author.id,
-                    word,
-                    message_id=message.id,
-                    channel_id=message.channel.id
-                )
+    async def _change_word(self, ctx, word: str, add: bool) -> None:
+        await defer_hybrid(ctx, ephemeral=True)
+        if ctx.interaction is None:
+            try:
+                await ctx.message.delete()
+            except discord.HTTPException:
+                pass
 
-    @commands.hybrid_command(name="addword", description="Add a word to track")
+        word = word.strip().casefold()
+        if not 1 <= len(word) <= 100 or (add and WORD.fullmatch(word) is None):
+            await send_hybrid_message(ctx, content="Enter one word of up to 100 characters.", ephemeral=True)
+            return
+        changed = await self.rules.set(ctx.guild.id, word, True if add else None)
+        if add:
+            message = "Word added." if changed else "This word is already tracked."
+        else:
+            message = "Word removed." if changed else "This word is not tracked."
+        await send_hybrid_message(ctx, content=message, ephemeral=True)
+
+    @commands.hybrid_command(name="addword", description="Add a word to track in this server")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def add_word(self, ctx, *, word: str):
-        """Add a new word to track"""
-        await defer_hybrid(ctx, ephemeral=True)
-        # Delete the command message to keep the word private
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        await self._change_word(ctx, word, True)
 
-        if self.word_filter.add_word(word):
-            embed = create_embed(
-                title="Word Added",
-                description="The specified word has been added to the tracking list.",
-                color=discord.Color.green().value
-            )
-        else:
-            embed = create_embed(
-                title="Already Tracked",
-                description="This word is already being tracked.",
-                color=discord.Color.yellow().value
-            )
-
-        # Send response appropriately for the context
-        await send_hybrid_message(ctx, embed=embed, ephemeral=True)
-
-    @commands.hybrid_command(name="removeword", description="Remove a word from tracking")
+    @commands.hybrid_command(name="removeword", description="Remove a word from tracking in this server")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def remove_word(self, ctx, *, word: str):
-        """Remove a word from tracking"""
-        await defer_hybrid(ctx, ephemeral=True)
-        # Delete the command message to keep the word private
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
-
-        if self.word_filter.remove_word(word):
-            embed = create_embed(
-                title="Word Removed",
-                description="The specified word has been removed from tracking.",
-                color=discord.Color.green().value
-            )
-        else:
-            embed = create_embed(
-                title="Not Found",
-                description="This word was not being tracked.",
-                color=discord.Color.yellow().value
-            )
-
-        # Send response appropriately for the context
-        await send_hybrid_message(ctx, embed=embed, ephemeral=True)
+        await self._change_word(ctx, word, False)
 
     @commands.hybrid_command(name="wordstats", description="View word usage statistics")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def word_stats(self, ctx, user: Optional[discord.Member] = None):
         """View word usage statistics for a user"""
+        if ctx.interaction is None:
+            try:
+                await ctx.message.delete()
+            except discord.HTTPException:
+                pass
         await defer_hybrid(ctx, ephemeral=True)
         guild_id = self._require_guild(ctx)
         target_user = user or ctx.author
@@ -125,11 +113,11 @@ class Moderation(commands.Cog):
         )
 
         # Add stats for each word
-        for stat in stats:
+        for stat in stats[:25]:
             last_used = datetime.fromisoformat(stat['last_used'])
             value = f"Count: {stat['usage_count']}\nLast used: {last_used.strftime('%Y-%m-%d %H:%M:%S')}"
             embed.add_field(
-                name=f"||{stat['word']}||",  # Spoiler tags to hide the words
+                name=f"||{stat['word'][:100]}||",  # Spoiler tags to hide the words
                 value=value,
                 inline=False
             )
@@ -137,14 +125,20 @@ class Moderation(commands.Cog):
         await send_hybrid_message(ctx, embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="wordleaderboard", description="View word usage leaderboard")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def word_leaderboard(self, ctx, word: Optional[str] = None):
         """View leaderboard for word usage"""
+        if ctx.interaction is None:
+            try:
+                await ctx.message.delete()
+            except discord.HTTPException:
+                pass
         await defer_hybrid(ctx, ephemeral=True)
         guild_id = self._require_guild(ctx)
         leaderboard = await self.db.get_word_leaderboard(
             guild_id,
-            word
+            word.strip().casefold() if word else None
         )
 
         if not leaderboard:
